@@ -353,6 +353,217 @@ app.get('/api/audit-log', authMiddleware('admin'), (req, res) => {
 });
 
 // ============================================================================
+// HTTP Polling API (fallback when WebSocket fails through ingress/Cloudflare)
+// ============================================================================
+
+const pollingViewers = new Map(); // viewerId -> { user, subscribedCameras, messageQueue, lastFrame, lastPoll }
+const POLL_VIEWER_TIMEOUT = 60000; // Remove viewer after 60s of no polling
+
+// Cleanup stale polling viewers
+setInterval(() => {
+  const now = Date.now();
+  pollingViewers.forEach((pv, id) => {
+    if (now - pv.lastPoll > POLL_VIEWER_TIMEOUT) {
+      console.log(`[Poll] Removing stale viewer: ${id}`);
+      // Remove from camera viewer sets
+      pv.subscribedCameras.forEach(camId => {
+        const camViewers = viewers.get(camId);
+        if (camViewers) camViewers.delete(pv.viewerProxy);
+      });
+      pollingViewers.delete(id);
+    }
+  });
+}, 15000);
+
+// Register a polling viewer
+app.post('/api/poll/register', authMiddleware(), (req, res) => {
+  const viewerId = uuidv4();
+  const userPayload = req.user;
+  
+  const allCamerasList = [];
+  cameras.forEach((cam, id) => {
+    if (auth.canAccessCamera(userPayload, id)) {
+      allCamerasList.push({
+        id,
+        name: cam.info?.name || 'Unknown',
+        resolution: cam.info?.resolution || 'unknown',
+        viewers: viewers.get(id)?.size || 0,
+        capabilities: cam.info?.capabilities || {},
+        detectionLevel: cam.health?.detectionLevel ?? cam.info?.capabilities?.detection_level ?? 0,
+        hardwareSummary: cam.info?.capabilities?.hardware_summary || {},
+        localRecording: cam.info?.capabilities?.local_recording || false,
+      });
+    }
+  });
+
+  // Create a proxy "ws" object so broadcastToViewers works for polling viewers too
+  const viewerProxy = {
+    ws: {
+      readyState: 1, // OPEN
+      send: (data) => {
+        try {
+          const pv = pollingViewers.get(viewerId);
+          if (pv) {
+            if (Buffer.isBuffer(data) || data instanceof ArrayBuffer || data instanceof Uint8Array) {
+              // Binary frame - store as latest frame per camera
+              const buf = Buffer.from(data);
+              const idLen = buf.readUInt32BE(0);
+              const camId = buf.slice(4, 4 + idLen).toString('utf8');
+              pv.lastFrame.set(camId, buf.slice(4 + idLen));
+            } else {
+              // JSON message - queue it
+              pv.messageQueue.push(typeof data === 'string' ? data : data.toString());
+              if (pv.messageQueue.length > 100) pv.messageQueue.shift();
+            }
+          }
+        } catch(e) {}
+      },
+    },
+    id: viewerId,
+    user: userPayload,
+    subscribedCameras: new Set(),
+  };
+
+  pollingViewers.set(viewerId, {
+    user: userPayload,
+    subscribedCameras: new Set(),
+    messageQueue: [],
+    lastFrame: new Map(),
+    lastPoll: Date.now(),
+    viewerProxy,
+  });
+
+  allViewers.set(viewerId, viewerProxy);
+
+  console.log(`[Poll] Viewer registered: ${viewerId} (${userPayload.username})`);
+
+  res.json({
+    type: 'connected',
+    viewer_id: viewerId,
+    user: { username: userPayload.username, role: userPayload.role },
+    subscribed_cameras: [],
+    available_cameras: allCamerasList,
+    transport: 'polling',
+  });
+});
+
+// Poll for messages
+app.get('/api/poll/messages/:viewerId', authMiddleware(), (req, res) => {
+  const pv = pollingViewers.get(req.params.viewerId);
+  if (!pv) return res.status(404).json({ error: 'Viewer not found, re-register' });
+  pv.lastPoll = Date.now();
+  const messages = pv.messageQueue.splice(0);
+  res.json({ messages: messages.map(m => { try { return JSON.parse(m); } catch(e) { return null; } }).filter(Boolean) });
+});
+
+// Poll for latest frame (JPEG) for a camera
+app.get('/api/poll/frame/:viewerId/:cameraId', authMiddleware(), (req, res) => {
+  const pv = pollingViewers.get(req.params.viewerId);
+  if (!pv) return res.status(404).json({ error: 'Viewer not found' });
+  pv.lastPoll = Date.now();
+  const frame = pv.lastFrame.get(req.params.cameraId);
+  if (frame) {
+    pv.lastFrame.delete(req.params.cameraId); // Clear after serving
+    res.set('Content-Type', 'image/jpeg');
+    res.send(frame);
+  } else {
+    res.status(204).end(); // No new frame
+  }
+});
+
+// Subscribe/unsubscribe via polling
+app.post('/api/poll/action/:viewerId', authMiddleware(), (req, res) => {
+  const pv = pollingViewers.get(req.params.viewerId);
+  if (!pv) return res.status(404).json({ error: 'Viewer not found' });
+  pv.lastPoll = Date.now();
+  
+  const msg = req.body;
+  if (!msg || !msg.type) return res.status(400).json({ error: 'Missing type' });
+
+  const viewerObj = pv.viewerProxy;
+
+  switch(msg.type) {
+    case 'subscribe': {
+      const camId = msg.camera_id;
+      if (!camId || !cameras.has(camId)) {
+        return res.json({ type: 'error', message: 'Camera not found' });
+      }
+      if (!auth.canAccessCamera(pv.user, camId)) {
+        return res.json({ type: 'error', message: 'Access denied' });
+      }
+      pv.subscribedCameras.add(camId);
+      viewerObj.subscribedCameras.add(camId);
+      let camViewers = viewers.get(camId);
+      if (!camViewers) { camViewers = new Set(); viewers.set(camId, camViewers); }
+      camViewers.add(viewerObj);
+      const cam = cameras.get(camId);
+      return res.json({
+        type: 'subscribed',
+        camera_id: camId,
+        camera_name: cam?.info?.name || 'Unknown',
+        camera_resolution: cam?.info?.resolution || 'unknown',
+        camera_capabilities: cam?.info?.capabilities || {},
+      });
+    }
+    case 'unsubscribe': {
+      const camId = msg.camera_id;
+      pv.subscribedCameras.delete(camId);
+      viewerObj.subscribedCameras.delete(camId);
+      const camViewers = viewers.get(camId);
+      if (camViewers) camViewers.delete(viewerObj);
+      pv.lastFrame.delete(camId);
+      return res.json({ type: 'unsubscribed', camera_id: camId });
+    }
+    case 'list_cameras': {
+      const cameraList = [];
+      cameras.forEach((cam, id) => {
+        if (auth.canAccessCamera(pv.user, id)) {
+          cameraList.push({
+            id,
+            name: cam.info?.name || 'Unknown',
+            resolution: cam.info?.resolution || 'unknown',
+            viewers: viewers.get(id)?.size || 0,
+            capabilities: cam.info?.capabilities || {},
+            detectionLevel: cam.health?.detectionLevel ?? cam.info?.capabilities?.detection_level ?? 0,
+            hardwareSummary: cam.info?.capabilities?.hardware_summary || {},
+            localRecording: cam.info?.capabilities?.local_recording || false,
+          });
+        }
+      });
+      return res.json({ type: 'camera_list', cameras: cameraList });
+    }
+    case 'command':
+    case 'ptz':
+    case 'set_detection_level':
+    case 'start_recording':
+    case 'stop_recording':
+    case 'get_remote_recordings':
+    case 'get_remote_clip':
+    case 'get_gpio_states':
+    case 'set_gpio_output':
+    case 'activate_scene':
+    case 'get_storage_stats':
+    case 'get_notification_settings':
+    case 'update_notification_settings': {
+      // Forward command to camera via its WS connection
+      const camId = msg.camera_id;
+      if (camId && cameras.has(camId)) {
+        const cam = cameras.get(camId);
+        cam.ws.send(JSON.stringify({
+          type: 'viewer_command',
+          command: msg.type,
+          params: msg,
+          viewer_id: viewerObj.id,
+        }));
+      }
+      return res.json({ type: 'ok', message: 'Command forwarded' });
+    }
+    default:
+      return res.json({ type: 'error', message: 'Unknown action type' });
+  }
+});
+
+// ============================================================================
 // WebSocket-server
 // ============================================================================
 

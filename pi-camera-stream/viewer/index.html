@@ -702,25 +702,49 @@ function doLogout(){
 }
 
 // ===================================================================
-// WEBSOCKET
+// TRANSPORT LAYER (WebSocket with HTTP polling fallback)
 // ===================================================================
 let reconnectTimer = null;
-const MAX_RECONNECT = 999;
+let transport = 'none'; // 'ws', 'polling', 'none'
+let pollViewerId = null;
+let pollTimers = { messages: null, frames: null };
+const WS_MAX_ATTEMPTS = 3; // Try WS this many times before falling back to polling
+const POLL_MSG_INTERVAL = 2000;  // Poll for messages every 2s
+const POLL_FRAME_INTERVAL = 300; // Poll for frames every 300ms (~3 fps)
+
+// Transport-agnostic send function
+function tSend(msgObj) {
+  if (transport === 'ws' && ws && ws.readyState === 1) {
+    ws.send(JSON.stringify(msgObj));
+  } else if (transport === 'polling' && pollViewerId) {
+    pollAction(msgObj);
+  } else {
+    dbg(`tSend failed: transport=${transport}, ws=${ws?.readyState}, pollId=${pollViewerId}`, 'warn');
+  }
+}
+
+// ── WebSocket Transport ──────────────────────────────────────────────
 
 function connectWS(){
   if (reconnectTimer) clearTimeout(reconnectTimer);
   wsConnectAttempt++;
   const attempt = wsConnectAttempt;
   
-  dbg(`WS connect attempt #${attempt} to: ${wsUrl}`);
-  showConnOverlay('Oppnar WebSocket-anslutning...', `Forsok #${attempt}: ${wsUrl}`);
+  // After WS_MAX_ATTEMPTS failures, switch to polling
+  if (attempt > WS_MAX_ATTEMPTS && document.getElementById('app').style.display !== 'flex') {
+    dbg(`WS failed ${WS_MAX_ATTEMPTS} times, switching to HTTP polling`, 'warn');
+    showConnOverlay('WebSocket fungerar inte genom ingress. Byter till HTTP-polling...', '');
+    startPolling();
+    return;
+  }
+  
+  dbg(`WS connect attempt #${attempt}/${WS_MAX_ATTEMPTS} to: ${wsUrl}`);
+  showConnOverlay('Oppnar WebSocket-anslutning...', `Forsok #${attempt}/${WS_MAX_ATTEMPTS}: ${wsUrl}`);
   
   try {
     ws = new WebSocket(wsUrl);
   } catch(e) {
     dbg(`WS constructor error: ${e.message}`, 'error');
-    showConnOverlay('WebSocket kunde inte skapas', e.message, true);
-    showConnRetry(attempt, MAX_RECONNECT);
     reconnectTimer = setTimeout(() => connectWS(), 3000);
     return;
   }
@@ -729,6 +753,8 @@ function connectWS(){
   
   ws.onopen = () => {
     dbg(`WS OPEN (attempt #${attempt})`, 'ok');
+    transport = 'ws';
+    wsConnectAttempt = 0;
     showConnOverlay('WebSocket oppnad! Registrerar viewer...', 'Skickar register_viewer...');
     const reg = { type: 'register_viewer' };
     if (isHAIngress) reg.ha_ingress = true;
@@ -743,10 +769,11 @@ function connectWS(){
     } else {
       try {
         const m = JSON.parse(e.data);
-        dbg(`WS recv: ${m.type}${m.message ? ' - ' + m.message : ''}`, m.type === 'error' ? 'error' : 'ok');
+        if (m.type !== 'error') dbg(`WS recv: ${m.type}`, 'ok');
+        else dbg(`WS recv error: ${m.message}`, 'error');
         handleMsg(m);
       } catch(err) {
-        dbg(`WS parse error: ${err.message}, data: ${String(e.data).substring(0,200)}`, 'error');
+        dbg(`WS parse error: ${err.message}`, 'error');
       }
     }
   };
@@ -756,32 +783,159 @@ function connectWS(){
     setStatus('offline');
     
     if (document.getElementById('app').style.display === 'flex') {
-      // Was connected before, just reconnect silently
-      showConnRetry(attempt, MAX_RECONNECT);
+      // Was connected, try to reconnect via WS
+      reconnectTimer = setTimeout(() => {
+        wsConnectAttempt = 0; // Reset counter for reconnects
+        connectWS();
+      }, 3000);
     } else {
-      // Never connected successfully
+      // Never connected - keep trying until WS_MAX_ATTEMPTS
       let reason = `WebSocket stangd (kod: ${e.code})`;
-      if (e.code === 1006) reason = 'Anslutningen avbrot ovantat (kod 1006). Mojliga orsaker: Cloudflare timeout, HA ingress proxy-problem, eller servern ar inte startad.';
-      else if (e.code === 1008) reason = 'Autentiseringsfel (kod 1008)';
-      else if (e.code === 1011) reason = 'Serverfel (kod 1011)';
-      else if (e.reason) reason = e.reason;
-      showConnOverlay('Anslutningen misslyckades', reason, true);
-      showConnRetry(wsConnectAttempt, MAX_RECONNECT);
+      if (e.code === 1006) reason = `Forsok ${attempt}/${WS_MAX_ATTEMPTS} misslyckades (kod 1006)`;
+      showConnOverlay('Testar WebSocket...', reason, attempt >= WS_MAX_ATTEMPTS);
+      reconnectTimer = setTimeout(() => connectWS(), 2000);
     }
-    
-    reconnectTimer = setTimeout(() => connectWS(), 3000);
   };
   
-  ws.onerror = (e) => {
+  ws.onerror = () => {
     dbg(`WS ERROR event (attempt #${attempt})`, 'error');
-    // onerror is always followed by onclose, so we handle there
   };
 }
 
-function setStatus(s){
+// ── HTTP Polling Transport ───────────────────────────────────────────
+
+async function startPolling() {
+  transport = 'polling';
+  dbg('Starting HTTP polling transport...', 'info');
+  showConnOverlay('Ansluter via HTTP-polling...', httpBase);
+  
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    
+    const r = await fetch(`${httpBase}/api/poll/register`, {
+      method: 'POST',
+      headers,
+    });
+    
+    if (!r.ok) {
+      const errText = await r.text();
+      dbg(`Poll register failed: ${r.status} ${errText}`, 'error');
+      showConnOverlay('Polling-registrering misslyckades', `HTTP ${r.status}: ${errText}`, true);
+      // Retry after delay
+      reconnectTimer = setTimeout(() => startPolling(), 5000);
+      return;
+    }
+    
+    const data = await r.json();
+    dbg(`Poll registered: viewer_id=${data.viewer_id}`, 'ok');
+    pollViewerId = data.viewer_id;
+    
+    // Treat as 'connected' message
+    handleMsg(data);
+    
+    // Start polling loops
+    startPollLoops();
+    
+  } catch(e) {
+    dbg(`Poll register error: ${e.message}`, 'error');
+    showConnOverlay('Kunde inte starta polling', e.message, true);
+    reconnectTimer = setTimeout(() => startPolling(), 5000);
+  }
+}
+
+function startPollLoops() {
+  stopPollLoops();
+  pollTimers.messages = setInterval(pollMessages, POLL_MSG_INTERVAL);
+  pollTimers.frames = setInterval(pollFrames, POLL_FRAME_INTERVAL);
+  dbg(`Poll loops started (msgs: ${POLL_MSG_INTERVAL}ms, frames: ${POLL_FRAME_INTERVAL}ms)`, 'ok');
+}
+
+function stopPollLoops() {
+  if (pollTimers.messages) { clearInterval(pollTimers.messages); pollTimers.messages = null; }
+  if (pollTimers.frames) { clearInterval(pollTimers.frames); pollTimers.frames = null; }
+}
+
+async function pollMessages() {
+  if (!pollViewerId) return;
+  try {
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const r = await fetch(`${httpBase}/api/poll/messages/${pollViewerId}`, { headers });
+    if (r.status === 404) {
+      dbg('Poll viewer expired, re-registering...', 'warn');
+      stopPollLoops();
+      startPolling();
+      return;
+    }
+    if (!r.ok) return;
+    const data = await r.json();
+    (data.messages || []).forEach(m => handleMsg(m));
+  } catch(e) {
+    // Silent fail, will retry next interval
+  }
+}
+
+async function pollFrames() {
+  if (!pollViewerId || subscribedCameras.size === 0) return;
+  // Poll one camera at a time in round-robin
+  const camIds = Array.from(subscribedCameras);
+  for (const camId of camIds) {
+    try {
+      const headers = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const r = await fetch(`${httpBase}/api/poll/frame/${pollViewerId}/${camId}`, { headers });
+      if (r.status === 204) continue; // No new frame
+      if (r.status === 404) { stopPollLoops(); startPolling(); return; }
+      if (!r.ok) continue;
+      const blob = await r.blob();
+      if (blob.size === 0) continue;
+      const url = URL.createObjectURL(blob);
+      const img = cameraImages.get(camId);
+      if (img) { const old = img.src; img.src = url; if (old && old.startsWith('blob:')) URL.revokeObjectURL(old); }
+      if (fullscreenCameraId === camId) {
+        const fi = document.getElementById('fs-img');
+        const old = fi.src; fi.src = url;
+        if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+      }
+    } catch(e) {
+      // Silent fail
+    }
+  }
+}
+
+async function pollAction(msgObj) {
+  if (!pollViewerId) return;
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const r = await fetch(`${httpBase}/api/poll/action/${pollViewerId}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(msgObj),
+    });
+    if (r.status === 404) { stopPollLoops(); startPolling(); return; }
+    if (!r.ok) return;
+    const data = await r.json();
+    // Some actions return immediate responses (subscribe, unsubscribe, list_cameras)
+    if (data.type && data.type !== 'ok') {
+      handleMsg(data);
+    }
+  } catch(e) {
+    dbg(`pollAction error: ${e.message}`, 'error');
+  }
+}
+
+function setStatus(s, tp){
   const el = document.getElementById('ws-status');
-  if (s === 'online') { el.innerHTML = '<span style="color:var(--green)">&#x25CF;</span> Ansluten'; el.style.color = 'var(--green)'; }
-  else { el.innerHTML = '<span style="color:var(--red)">&#x25CF;</span> Frankopplad'; el.style.color = 'var(--red)'; }
+  if (s === 'online') {
+    const label = tp === 'polling' ? 'Ansluten (HTTP)' : 'Ansluten (WS)';
+    el.innerHTML = `<span style="color:var(--green)">&#x25CF;</span> ${label}`;
+    el.style.color = 'var(--green)';
+  } else {
+    el.innerHTML = '<span style="color:var(--red)">&#x25CF;</span> Frankopplad';
+    el.style.color = 'var(--red)';
+  }
 }
 
 function handleMsg(m){
@@ -843,12 +997,13 @@ function showToast(text, type='gpio', duration=4000){
 // APP INIT
 // ===================================================================
 function showApp(m){
-  dbg('showApp() called - connection successful!', 'ok');
+  const tp = m.transport || transport || 'ws';
+  dbg(`showApp() called - connected via ${tp}!`, 'ok');
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   hideConnOverlay();
   wsConnectAttempt = 0;
-  setStatus('online');
+  setStatus('online', tp);
   if (user) {
     document.getElementById('user-display').textContent = user.displayName || user.username;
     const r = document.getElementById('user-role');
@@ -905,8 +1060,8 @@ function refreshUI(){
 }
 
 function toggleCam(id, on){
-  if (on) ws.send(JSON.stringify({ type: 'subscribe', camera_id: id }));
-  else { ws.send(JSON.stringify({ type: 'unsubscribe', camera_id: id })); subscribedCameras.delete(id); cameraImages.delete(id); updateGrid(); }
+  if (on) tSend({ type: 'subscribe', camera_id: id });
+  else { tSend({ type: 'unsubscribe', camera_id: id }); subscribedCameras.delete(id); cameraImages.delete(id); updateGrid(); }
 }
 
 function onMotion(m){
@@ -969,13 +1124,13 @@ function openFS(id){
   renderDetPanel(id);
   renderFSGPIOPanel(id);
   // Request GPIO states
-  ws.send(JSON.stringify({ type: 'get_gpio_states', camera_id: id, request_id: 'fsgpio_' + Date.now() }));
+  tSend({ type: 'get_gpio_states', camera_id: id, request_id: 'fsgpio_' + Date.now() });
 }
 function closeFullscreen(){ fullscreenCameraId = null; document.getElementById('fullscreen-overlay').classList.remove('active'); }
-function sendPTZ(action, params){ if (!fullscreenCameraId) return; ws.send(JSON.stringify({ type: 'ptz', camera_id: fullscreenCameraId, action, params: params||{} })); }
+function sendPTZ(action, params){ if (!fullscreenCameraId) return; tSend({ type: 'ptz', camera_id: fullscreenCameraId, action, params: params||{} }); }
 function takeSnapshot(){ const img = document.getElementById('fs-img'); if (!img.src) return; const a = document.createElement('a'); a.href = img.src; a.download = `snap_${fullscreenCameraId}_${Date.now()}.jpg`; a.click(); }
 function snapCam(id){ const img = cameraImages.get(id); if (!img?.src) return; const a = document.createElement('a'); a.href = img.src; a.download = `snap_${id}_${Date.now()}.jpg`; a.click(); }
-function toggleRecording(){ if (!fullscreenCameraId) return; ws.send(JSON.stringify({ type: 'start_recording', camera_id: fullscreenCameraId })); }
+function toggleRecording(){ if (!fullscreenCameraId) return; tSend({ type: 'start_recording', camera_id: fullscreenCameraId }); }
 
 function toggleDetPanel(){
   const panel = document.getElementById('fs-det-panel');
@@ -983,7 +1138,7 @@ function toggleDetPanel(){
   panel.classList.toggle('visible');
   if (panel.classList.contains('visible') && fullscreenCameraId) {
     renderDetPanel(fullscreenCameraId);
-    ws.send(JSON.stringify({ type: 'get_storage_stats', camera_id: fullscreenCameraId, request_id: 'det_' + Date.now() }));
+    tSend({ type: 'get_storage_stats', camera_id: fullscreenCameraId, request_id: 'det_' + Date.now() });
   }
 }
 
@@ -992,7 +1147,7 @@ function toggleGPIOPanel(){
   document.getElementById('fs-det-panel').classList.remove('visible');
   panel.classList.toggle('visible');
   if (panel.classList.contains('visible') && fullscreenCameraId) {
-    ws.send(JSON.stringify({ type: 'get_gpio_states', camera_id: fullscreenCameraId, request_id: 'fsgpio_' + Date.now() }));
+    tSend({ type: 'get_gpio_states', camera_id: fullscreenCameraId, request_id: 'fsgpio_' + Date.now() });
   }
 }
 
@@ -1027,7 +1182,7 @@ function renderDetPanel(camId){
 }
 
 function setDetLevel(camId, level){
-  ws.send(JSON.stringify({ type: 'set_detection_level', camera_id: camId, level: level }));
+  tSend({ type: 'set_detection_level', camera_id: camId, level: level });
   const cam = cameras.get(camId);
   if (cam) cam.detectionLevel = level;
   renderDetPanel(camId);
@@ -1068,7 +1223,7 @@ function onSceneActivated(m){
   showToast(`Scen: ${m.scene_label || m.scene_name} aktiverad (${cameras.get(m.camera_id)?.name || m.camera_id})`, 'scene');
   if (fullscreenCameraId === m.camera_id) {
     // Request updated GPIO states
-    ws.send(JSON.stringify({ type: 'get_gpio_states', camera_id: m.camera_id, request_id: 'scene_' + Date.now() }));
+    tSend({ type: 'get_gpio_states', camera_id: m.camera_id, request_id: 'scene_' + Date.now() });
   }
 }
 
@@ -1090,16 +1245,16 @@ function onGPIOOutputSet(m){
 
 function requestAllGPIOStates(){
   cameras.forEach((c, id) => {
-    ws.send(JSON.stringify({ type: 'get_gpio_states', camera_id: id, request_id: 'init_' + Date.now() }));
+    tSend({ type: 'get_gpio_states', camera_id: id, request_id: 'init_' + Date.now() });
   });
 }
 
 function setGPIOOutput(camId, outputName, state){
-  ws.send(JSON.stringify({ type: 'set_gpio_output', camera_id: camId, output_name: outputName, state: state }));
+  tSend({ type: 'set_gpio_output', camera_id: camId, output_name: outputName, state: state });
 }
 
 function activateScene(camId, sceneName){
-  ws.send(JSON.stringify({ type: 'activate_scene', camera_id: camId, scene_name: sceneName }));
+  tSend({ type: 'activate_scene', camera_id: camId, scene_name: sceneName });
 }
 
 function renderFSGPIOPanel(camId){
@@ -1339,7 +1494,7 @@ function loadRemoteRecordings(){
   if (!cam) return;
   const el = document.getElementById('rec-list');
   el.innerHTML = '<p style="color:var(--text3)">Hamtar inspelningar fran Pi-klienten...</p>';
-  ws.send(JSON.stringify({ type: 'get_remote_recordings', camera_id: cam, date: date || null, limit: 50, request_id: 'rec_' + Date.now() }));
+  tSend({ type: 'get_remote_recordings', camera_id: cam, date: date || null, limit: 50, request_id: 'rec_' + Date.now() });
 }
 
 function onRemoteRecordings(m){
@@ -1368,7 +1523,7 @@ function playRemoteClip(camId, clipPath){
   document.getElementById('pb-frame-info').textContent = 'Hamtar...';
   document.getElementById('pb-slider').max = 0;
   playbackFrames = []; playbackIndex = 0; playbackPlaying = false;
-  ws.send(JSON.stringify({ type: 'get_remote_clip', camera_id: camId, clip_path: clipPath, max_frames: 200, request_id: 'clip_' + Date.now() }));
+  tSend({ type: 'get_remote_clip', camera_id: camId, clip_path: clipPath, max_frames: 200, request_id: 'clip_' + Date.now() });
 }
 
 function onRemoteClip(m){
@@ -1430,7 +1585,7 @@ function onNotificationSettings(m){
 }
 
 function updateNotifSetting(camId, key, value){
-  ws.send(JSON.stringify({ type: 'update_notification_settings', camera_id: camId, settings: { [key]: value } }));
+  tSend({ type: 'update_notification_settings', camera_id: camId, settings: { [key]: value } });
 }
 
 // ===================================================================
@@ -1452,7 +1607,7 @@ async function loadAdmin(){
   nc.innerHTML = '<p style="color:var(--text3)">Valj en kamera for att se notis-installningar.</p>';
   let ncHtml = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
   cameras.forEach((c, id) => {
-    ncHtml += `<button class="btn btn-sm" style="background:var(--bg3)" onclick="ws.send(JSON.stringify({type:'get_notification_settings',camera_id:'${id}'}))">${esc(c.name)}</button>`;
+    ncHtml += `<button class="btn btn-sm" style="background:var(--bg3)" onclick="tSend({type:'get_notification_settings',camera_id:'${id}'})">${esc(c.name)}</button>`;
   });
   ncHtml += '</div><div id="notif-detail"></div>';
   nc.innerHTML = ncHtml;
