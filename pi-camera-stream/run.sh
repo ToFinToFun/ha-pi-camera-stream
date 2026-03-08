@@ -7,6 +7,19 @@ set -e
 
 echo "[INFO] Starting Pi Camera Stream add-on..."
 
+# ─── Debug: Check for Supervisor token in various locations ───
+echo "[DEBUG] Checking for SUPERVISOR_TOKEN..."
+if [ -n "$SUPERVISOR_TOKEN" ]; then
+    echo "[DEBUG] SUPERVISOR_TOKEN found in environment (${#SUPERVISOR_TOKEN} chars)"
+elif [ -n "$HASSIO_TOKEN" ]; then
+    echo "[DEBUG] HASSIO_TOKEN found, using as SUPERVISOR_TOKEN"
+    export SUPERVISOR_TOKEN="$HASSIO_TOKEN"
+else
+    echo "[DEBUG] No SUPERVISOR_TOKEN or HASSIO_TOKEN in environment"
+    echo "[DEBUG] Relevant env vars:"
+    env | grep -i "super\|hassio\|token\|home\|addon" 2>/dev/null || echo "[DEBUG] No matching env vars found"
+fi
+
 # ─── Read configuration from HA options ───
 CONFIG_PATH=/data/options.json
 
@@ -14,9 +27,6 @@ if [ ! -f "$CONFIG_PATH" ]; then
     echo "[ERROR] Options file not found at $CONFIG_PATH"
     exit 1
 fi
-
-echo "[DEBUG] Options file content:"
-cat "$CONFIG_PATH" | jq '.' 2>/dev/null || cat "$CONFIG_PATH"
 
 CAMERA_SECRET=$(jq -r '.camera_secret // ""' "$CONFIG_PATH")
 JWT_SECRET=$(jq -r '.jwt_secret // ""' "$CONFIG_PATH")
@@ -58,9 +68,9 @@ if [ "$MQTT_ENABLED" = "true" ]; then
     echo "[INFO] MQTT is enabled, looking for broker..."
     
     if [ -n "$SUPERVISOR_TOKEN" ]; then
-        echo "[DEBUG] Supervisor token available, querying services/mqtt..."
-        MQTT_RESPONSE=$(curl -s -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-            http://supervisor/services/mqtt 2>/dev/null || echo '{"result":"error"}')
+        echo "[DEBUG] Querying http://supervisor/services/mqtt ..."
+        MQTT_RESPONSE=$(curl -s -f -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            http://supervisor/services/mqtt 2>&1 || echo '{"result":"error","message":"curl failed"}')
         echo "[DEBUG] MQTT API response: $MQTT_RESPONSE"
         
         MQTT_RESULT=$(echo "$MQTT_RESPONSE" | jq -r '.result // "error"' 2>/dev/null || echo "error")
@@ -78,13 +88,14 @@ if [ "$MQTT_ENABLED" = "true" ]; then
                 MQTT_ENABLED="false"
             fi
         else
-            echo "[WARN] MQTT service not available from Supervisor API (result: $MQTT_RESULT)"
+            echo "[WARN] MQTT service query failed (result: $MQTT_RESULT)"
             echo "[WARN] Make sure Mosquitto broker add-on is installed and running."
             echo "[WARN] Disabling MQTT to prevent reconnect loops."
             MQTT_ENABLED="false"
         fi
     else
-        echo "[WARN] MQTT enabled but no Supervisor token available. Disabling MQTT."
+        echo "[WARN] No Supervisor token available. Cannot query MQTT service."
+        echo "[WARN] Disabling MQTT. To use MQTT, ensure hassio_api is enabled."
         MQTT_ENABLED="false"
     fi
 fi
@@ -96,6 +107,8 @@ if [ -n "$SUPERVISOR_TOKEN" ]; then
         http://supervisor/addons/self/info 2>/dev/null || echo "{}")
     INGRESS_PATH=$(echo "$ADDON_INFO" | jq -r '.data.ingress_entry // ""' 2>/dev/null || echo "")
     echo "[INFO] Ingress path: ${INGRESS_PATH}"
+else
+    echo "[WARN] No Supervisor token - ingress path unknown"
 fi
 
 # ─── Create directories ───
