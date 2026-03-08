@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 # ==============================================================================
-# Pi Camera Stream - Home Assistant Add-on Startup Script
+# Pi Camera Stream - Home Assistant Add-on Service Script
 # ==============================================================================
 
 bashio::log.info "Starting Pi Camera Stream add-on..."
