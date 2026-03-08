@@ -28,12 +28,13 @@ map:
   - type: media
     read_only: false
 ports:
-  8765/tcp: null
+  8765/tcp: 8765
 ports_description:
-  8765/tcp: "WebSocket relay port (disabled when using ingress)"
+  8765/tcp: "Direct WebSocket port (for Cloudflare/external access)"
 options:
   camera_secret: ""
   jwt_secret: ""
+  direct_ws_url: ""
   mqtt_enabled: false
   mqtt_host: ""
   mqtt_port: 1883
@@ -47,6 +48,7 @@ options:
 schema:
   camera_secret: "str"
   jwt_secret: "str"
+  direct_ws_url: "str?"
   mqtt_enabled: "bool"
   mqtt_host: "str"
   mqtt_port: "int"

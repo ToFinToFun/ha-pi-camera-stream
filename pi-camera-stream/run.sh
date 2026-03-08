@@ -81,6 +81,7 @@ fi
 
 CAMERA_SECRET=$(jq -r '.camera_secret // ""' "$CONFIG_PATH")
 JWT_SECRET=$(jq -r '.jwt_secret // ""' "$CONFIG_PATH")
+DIRECT_WS_URL=$(jq -r '.direct_ws_url // ""' "$CONFIG_PATH")
 MQTT_ENABLED=$(jq -r '.mqtt_enabled // false' "$CONFIG_PATH")
 MQTT_TOPIC_PREFIX=$(jq -r '.mqtt_topic_prefix // "pi_camera_stream"' "$CONFIG_PATH")
 RECORDING_ENABLED=$(jq -r '.recording_enabled // true' "$CONFIG_PATH")
@@ -189,6 +190,7 @@ mkdir -p /data/db
 # ─── Export environment variables ───
 export CAMERA_SECRET
 export JWT_SECRET
+export DIRECT_WS_URL
 export PORT=8099
 export INGRESS_PATH
 export SUPERVISOR_TOKEN
@@ -218,6 +220,9 @@ echo "[run.sh]   - Recording enabled: ${RECORDING_ENABLED}"
 echo "[run.sh]   - Recording path: ${RECORDING_PATH}"
 echo "[run.sh]   - Log level: ${LOG_LEVEL}"
 echo "[run.sh]   - Camera secret: ${CAMERA_SECRET:0:4}****"
+if [ -n "$DIRECT_WS_URL" ] && [ "$DIRECT_WS_URL" != "null" ] && [ "$DIRECT_WS_URL" != "" ]; then
+    echo "[run.sh]   - Direct WS URL: ${DIRECT_WS_URL}"
+fi
 echo "[run.sh] ============================================"
 
 # ─── Start the relay server ───

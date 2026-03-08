@@ -41,6 +41,7 @@ const CONFIG = {
   logLevel: process.env.LOG_LEVEL || 'info',
   supervisorToken: process.env.SUPERVISOR_TOKEN || '',
   haAuthApi: process.env.HA_AUTH_API === 'true',
+  directWsUrl: process.env.DIRECT_WS_URL || '',
 };
 
 console.log('===========================================');
@@ -49,6 +50,7 @@ console.log('  Home Assistant Add-on Edition');
 console.log('===========================================');
 if (IS_HA_ADDON) {
   console.log(`  Ingress path: ${INGRESS_PATH}`);
+  if (CONFIG.directWsUrl) console.log(`  Direct WS URL: ${CONFIG.directWsUrl}`);
 }
 
 // ============================================================================
@@ -289,6 +291,7 @@ app.get('/api/health', (req, res) => {
     haAddon: IS_HA_ADDON,
     ingressPath: INGRESS_PATH || null,
     wsClients: wss.clients.size,
+    directWsUrl: CONFIG.directWsUrl || null,
   });
 });
 
@@ -1527,12 +1530,74 @@ server.listen(CONFIG.port, '0.0.0.0', () => {
   console.log('');
 });
 
+// ── Direct WebSocket port (8765) for external/Cloudflare access ──────
+const DIRECT_PORT = 8765;
+const directServer = http.createServer(app); // Reuse same Express app
+const directWss = new WebSocket.Server({ server: directServer });
+
+// Share the same connection handler as the main WSS
+directWss.on('connection', (ws, req) => {
+  ws.isAlive = true;
+  ws.on('pong', heartbeat);
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  
+  console.log(`[WS:${DIRECT_PORT}] New direct connection from ${clientIp}`);
+
+  ws.once('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      console.log(`[WS:${DIRECT_PORT}] First message from ${clientIp}: ${JSON.stringify(msg).substring(0,200)}`);
+      if (msg.type === 'register_camera') {
+        handleCameraRegistration(ws, msg, clientIp);
+      } else if (msg.type === 'register_viewer') {
+        handleViewerRegistration(ws, msg, clientIp);
+      } else {
+        ws.send(JSON.stringify({ type: 'error', message: 'Unknown type' }));
+        ws.close();
+      }
+    } catch (err) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+      ws.close();
+    }
+  });
+
+  ws.on('close', (code, reason) => {
+    console.log(`[WS:${DIRECT_PORT}] Connection closed from ${clientIp}: code=${code}`);
+  });
+
+  setTimeout(() => {
+    if (!ws.role) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Registration timeout' }));
+      ws.close();
+    }
+  }, 10000);
+});
+
+// Heartbeat for direct WSS
+const directHeartbeat = setInterval(() => {
+  directWss.clients.forEach((ws) => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, CONFIG.heartbeatInterval);
+directWss.on('close', () => clearInterval(directHeartbeat));
+
+directServer.listen(DIRECT_PORT, '0.0.0.0', () => {
+  console.log(`Direct WebSocket server on port ${DIRECT_PORT}`);
+  if (CONFIG.directWsUrl) {
+    console.log(`  External URL: ${CONFIG.directWsUrl}`);
+  }
+});
+
 process.on('SIGTERM', () => {
   console.log('[Server] Shutting down...');
   mqttHA.close();
   recordings.close();
   auth.close();
   wss.clients.forEach((ws) => ws.close());
+  directWss.clients.forEach((ws) => ws.close());
+  directServer.close();
   server.close(() => process.exit(0));
 });
 
@@ -1542,5 +1607,7 @@ process.on('SIGINT', () => {
   recordings.close();
   auth.close();
   wss.clients.forEach((ws) => ws.close());
+  directWss.clients.forEach((ws) => ws.close());
+  directServer.close();
   server.close(() => process.exit(0));
 });

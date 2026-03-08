@@ -660,7 +660,20 @@ async function testHttpThenConnect() {
     if (r.ok) {
       const data = await r.json();
       dbg(`HTTP OK: server v${data.version || '?'}, uptime ${data.uptime || '?'}s`, 'ok');
-      showConnOverlay('Server hittad! Oppnar WebSocket...', `Server version: ${data.version || 'okand'}`);
+      
+      // Check if server provides a direct WebSocket URL
+      if (data.directWsUrl && isHAIngress) {
+        // Convert HTTP URL to WS URL
+        let directUrl = data.directWsUrl;
+        if (directUrl.startsWith('https://')) directUrl = 'wss://' + directUrl.slice(8);
+        else if (directUrl.startsWith('http://')) directUrl = 'ws://' + directUrl.slice(7);
+        else if (!directUrl.startsWith('wss://') && !directUrl.startsWith('ws://')) directUrl = 'wss://' + directUrl;
+        wsUrl = directUrl;
+        dbg(`Direct WS URL from server: ${wsUrl}`, 'ok');
+        showConnOverlay('Server hittad! Ansluter direkt via WebSocket...', `Direkt WS: ${wsUrl}`);
+      } else {
+        showConnOverlay('Server hittad! Oppnar WebSocket...', `Server version: ${data.version || 'okand'}`);
+      }
     } else {
       dbg(`HTTP response: ${r.status} ${r.statusText}`, 'warn');
       showConnOverlay('Server svarade med fel', `HTTP ${r.status}: ${r.statusText}`, true);
