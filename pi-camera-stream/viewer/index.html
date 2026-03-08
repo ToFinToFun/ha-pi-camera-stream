@@ -245,6 +245,34 @@ a{color:var(--blue);text-decoration:none}
 .toast.error{background:rgba(239,68,68,.9);color:#fff}
 @keyframes toastIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
 
+/* Connection Status Overlay */
+#conn-overlay{display:none;position:fixed;inset:0;z-index:5000;background:linear-gradient(135deg,#0f172a,#1e293b);
+  align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:24px}
+#conn-overlay.active{display:flex}
+#conn-overlay .conn-icon{font-size:48px;animation:pulse 1.5s ease-in-out infinite}
+#conn-overlay .conn-title{font-size:22px;font-weight:700;text-align:center}
+#conn-overlay .conn-msg{font-size:14px;color:var(--text2);text-align:center;max-width:400px}
+#conn-overlay .conn-status{font-size:13px;color:var(--text3);text-align:center;font-family:monospace;max-width:90vw;word-break:break-all}
+#conn-overlay .conn-error{color:var(--red);font-size:14px;text-align:center;max-width:400px}
+#conn-overlay .conn-retry{font-size:13px;color:var(--yellow)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Debug Log Panel */
+#debug-panel{display:none;position:fixed;bottom:0;left:0;right:0;max-height:40vh;z-index:6000;
+  background:rgba(0,0,0,.95);border-top:2px solid var(--blue);overflow-y:auto;padding:8px}
+#debug-panel.active{display:block}
+#debug-panel .debug-header{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;
+  position:sticky;top:0;background:rgba(0,0,0,.95);border-bottom:1px solid var(--bg3)}
+#debug-panel .debug-header h4{font-size:13px;color:var(--blue)}
+#debug-log{font-family:monospace;font-size:11px;line-height:1.6;padding:8px;color:var(--text2)}
+#debug-log .log-error{color:var(--red)}
+#debug-log .log-warn{color:var(--yellow)}
+#debug-log .log-ok{color:var(--green)}
+#debug-log .log-info{color:var(--cyan)}
+#debug-toggle{position:fixed;bottom:8px;left:8px;z-index:5500;background:var(--bg3);color:var(--text3);
+  border-radius:50%;width:36px;height:36px;font-size:16px;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(0,0,0,.5);cursor:pointer}
+
 /* Responsive */
 @media(max-width:768px){
   .sidebar{position:fixed;left:-280px;top:var(--topbar);bottom:0;z-index:200;transition:.3s}
@@ -395,6 +423,28 @@ a{color:var(--blue);text-decoration:none}
   </div>
 </div>
 
+<!-- CONNECTION STATUS OVERLAY -->
+<div id="conn-overlay" class="active">
+  <div class="conn-icon">&#x1F4F7;</div>
+  <div class="conn-title">Pi Camera Stream</div>
+  <div class="conn-msg" id="conn-msg">Ansluter till servern...</div>
+  <div class="conn-status" id="conn-detail"></div>
+  <div class="conn-error" id="conn-error" style="display:none"></div>
+  <div class="conn-retry" id="conn-retry" style="display:none"></div>
+</div>
+
+<!-- DEBUG LOG TOGGLE -->
+<button id="debug-toggle" onclick="toggleDebugPanel()" title="Visa debug-logg">&#x1F41B;</button>
+
+<!-- DEBUG LOG PANEL -->
+<div id="debug-panel">
+  <div class="debug-header">
+    <h4>Debug Log</h4>
+    <button style="color:var(--text2);font-size:18px" onclick="toggleDebugPanel()">&times;</button>
+  </div>
+  <div id="debug-log"></div>
+</div>
+
 <!-- TOAST CONTAINER -->
 <div class="toast-container" id="toast-container"></div>
 
@@ -480,6 +530,12 @@ a{color:var(--blue);text-decoration:none}
 
 <script>
 // ===================================================================
+// UTILS (must be defined first)
+// ===================================================================
+function esc(s){ return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
+function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
+
+// ===================================================================
 // STATE
 // ===================================================================
 let ws=null, token=null, user=null, httpBase='', wsUrl='';
@@ -487,7 +543,9 @@ let isHAIngress=false, ingressPath='';
 let cameras=new Map(), subscribedCameras=new Set(), cameraImages=new Map(), cameraMotion=new Map();
 let fullscreenCameraId=null;
 let playbackFrames=[], playbackIndex=0, playbackTimer=null, playbackPlaying=false;
-let gpioStates = new Map(); // cameraId -> { inputs: [...], outputs: [...], scenes: [...] }
+let gpioStates = new Map();
+let wsConnectAttempt = 0;
+let debugLogEntries = [];
 
 const DETECTION_LEVELS = [
   { level: 0, name: 'Av', desc: 'Ingen detektering, bara streaming', color: 'var(--text3)' },
@@ -506,6 +564,52 @@ const SCENE_ICONS = {
 };
 
 // ===================================================================
+// DEBUG LOGGING
+// ===================================================================
+function dbg(msg, level='info') {
+  const ts = new Date().toLocaleTimeString('sv-SE');
+  const entry = { ts, msg, level };
+  debugLogEntries.push(entry);
+  if (debugLogEntries.length > 200) debugLogEntries.shift();
+  const el = document.getElementById('debug-log');
+  if (el) {
+    const cls = level === 'error' ? 'log-error' : level === 'warn' ? 'log-warn' : level === 'ok' ? 'log-ok' : 'log-info';
+    el.innerHTML += `<div class="${cls}">[${ts}] ${esc(msg)}</div>`;
+    el.scrollTop = el.scrollHeight;
+  }
+  console.log(`[DBG:${level}] ${msg}`);
+}
+
+function toggleDebugPanel() {
+  document.getElementById('debug-panel').classList.toggle('active');
+}
+
+// ===================================================================
+// CONNECTION OVERLAY
+// ===================================================================
+function showConnOverlay(msg, detail, isError) {
+  const overlay = document.getElementById('conn-overlay');
+  overlay.classList.add('active');
+  document.getElementById('conn-msg').textContent = msg;
+  const detailEl = document.getElementById('conn-detail');
+  detailEl.textContent = detail || '';
+  const errEl = document.getElementById('conn-error');
+  errEl.style.display = isError ? 'block' : 'none';
+  if (isError) errEl.textContent = detail || '';
+  if (isError) detailEl.textContent = '';
+}
+
+function showConnRetry(attempt, maxAttempts) {
+  const el = document.getElementById('conn-retry');
+  el.style.display = 'block';
+  el.textContent = `Forsok ${attempt}/${maxAttempts} - nasta forsok om 3s...`;
+}
+
+function hideConnOverlay() {
+  document.getElementById('conn-overlay').classList.remove('active');
+}
+
+// ===================================================================
 // DETECT HA INGRESS MODE
 // ===================================================================
 (function detectMode(){
@@ -519,6 +623,11 @@ const SCENE_ICONS = {
     httpBase = `${loc.protocol}//${loc.host}`;
     wsUrl = `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}`;
   }
+  dbg(`Mode: ${isHAIngress ? 'HA Ingress' : 'Standalone'}`);
+  dbg(`HTTP base: ${httpBase}`);
+  dbg(`WS URL: ${wsUrl}`);
+  dbg(`Location: ${loc.href}`);
+  if (isHAIngress) dbg(`Ingress path: ${ingressPath}`);
 })();
 
 // ===================================================================
@@ -527,13 +636,42 @@ const SCENE_ICONS = {
 (async function init(){
   if (isHAIngress) {
     document.getElementById('login-screen').style.display = 'none';
+    showConnOverlay('Ansluter via Home Assistant...', `WebSocket: ${wsUrl}`);
     user = { username: 'ha_user', role: 'admin', displayName: 'Home Assistant' };
     token = null;
-    connectWS();
+    dbg('HA Ingress mode - auto-login, starting WebSocket...', 'ok');
+    // First test HTTP connectivity, then connect WS
+    testHttpThenConnect();
   } else {
+    document.getElementById('conn-overlay').classList.remove('active');
     document.getElementById('login-screen').style.display = 'flex';
+    dbg('Standalone mode - showing login screen');
   }
 })();
+
+async function testHttpThenConnect() {
+  dbg('Testing HTTP connectivity to server...');
+  showConnOverlay('Testar anslutning till servern...', httpBase);
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const r = await fetch(`${httpBase}/api/health`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (r.ok) {
+      const data = await r.json();
+      dbg(`HTTP OK: server v${data.version || '?'}, uptime ${data.uptime || '?'}s`, 'ok');
+      showConnOverlay('Server hittad! Oppnar WebSocket...', `Server version: ${data.version || 'okand'}`);
+    } else {
+      dbg(`HTTP response: ${r.status} ${r.statusText}`, 'warn');
+      showConnOverlay('Server svarade med fel', `HTTP ${r.status}: ${r.statusText}`, true);
+    }
+  } catch(e) {
+    dbg(`HTTP test failed: ${e.message}`, 'error');
+    showConnOverlay('Kan inte na servern via HTTP', `${e.message}\n\nURL: ${httpBase}/api/health`, true);
+  }
+  // Try WebSocket regardless of HTTP test result
+  connectWS();
+}
 
 // ===================================================================
 // LOGIN
@@ -552,8 +690,9 @@ async function doLogin(){
     const d = await r.json();
     if (!r.ok) { err.textContent = d.error || 'Inloggning misslyckades'; err.style.display = 'block'; return; }
     token = d.token; user = d.user;
+    dbg(`Login OK: ${user.username} (${user.role})`, 'ok');
     connectWS();
-  } catch (e) { err.textContent = 'Kunde inte ansluta till servern'; err.style.display = 'block'; }
+  } catch (e) { err.textContent = 'Kunde inte ansluta till servern'; err.style.display = 'block'; dbg(`Login failed: ${e.message}`, 'error'); }
 }
 function doLogout(){
   if (ws) ws.close(); token = null; user = null;
@@ -566,22 +705,77 @@ function doLogout(){
 // WEBSOCKET
 // ===================================================================
 let reconnectTimer = null;
+const MAX_RECONNECT = 999;
+
 function connectWS(){
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  ws = new WebSocket(wsUrl);
+  wsConnectAttempt++;
+  const attempt = wsConnectAttempt;
+  
+  dbg(`WS connect attempt #${attempt} to: ${wsUrl}`);
+  showConnOverlay('Oppnar WebSocket-anslutning...', `Forsok #${attempt}: ${wsUrl}`);
+  
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch(e) {
+    dbg(`WS constructor error: ${e.message}`, 'error');
+    showConnOverlay('WebSocket kunde inte skapas', e.message, true);
+    showConnRetry(attempt, MAX_RECONNECT);
+    reconnectTimer = setTimeout(() => connectWS(), 3000);
+    return;
+  }
+  
   ws.binaryType = 'arraybuffer';
+  
   ws.onopen = () => {
+    dbg(`WS OPEN (attempt #${attempt})`, 'ok');
+    showConnOverlay('WebSocket oppnad! Registrerar viewer...', 'Skickar register_viewer...');
     const reg = { type: 'register_viewer' };
     if (isHAIngress) reg.ha_ingress = true;
     else if (token) reg.token = token;
+    dbg(`Sending: ${JSON.stringify(reg)}`);
     ws.send(JSON.stringify(reg));
   };
+  
   ws.onmessage = (e) => {
-    if (e.data instanceof ArrayBuffer) handleFrame(e.data);
-    else handleMsg(JSON.parse(e.data));
+    if (e.data instanceof ArrayBuffer) {
+      handleFrame(e.data);
+    } else {
+      try {
+        const m = JSON.parse(e.data);
+        dbg(`WS recv: ${m.type}${m.message ? ' - ' + m.message : ''}`, m.type === 'error' ? 'error' : 'ok');
+        handleMsg(m);
+      } catch(err) {
+        dbg(`WS parse error: ${err.message}, data: ${String(e.data).substring(0,200)}`, 'error');
+      }
+    }
   };
-  ws.onclose = () => { setStatus('offline'); reconnectTimer = setTimeout(() => connectWS(), 3000); };
-  ws.onerror = () => {};
+  
+  ws.onclose = (e) => {
+    dbg(`WS CLOSED: code=${e.code} reason="${e.reason}" clean=${e.wasClean}`, 'warn');
+    setStatus('offline');
+    
+    if (document.getElementById('app').style.display === 'flex') {
+      // Was connected before, just reconnect silently
+      showConnRetry(attempt, MAX_RECONNECT);
+    } else {
+      // Never connected successfully
+      let reason = `WebSocket stangd (kod: ${e.code})`;
+      if (e.code === 1006) reason = 'Anslutningen avbrot ovantat (kod 1006). Mojliga orsaker: Cloudflare timeout, HA ingress proxy-problem, eller servern ar inte startad.';
+      else if (e.code === 1008) reason = 'Autentiseringsfel (kod 1008)';
+      else if (e.code === 1011) reason = 'Serverfel (kod 1011)';
+      else if (e.reason) reason = e.reason;
+      showConnOverlay('Anslutningen misslyckades', reason, true);
+      showConnRetry(wsConnectAttempt, MAX_RECONNECT);
+    }
+    
+    reconnectTimer = setTimeout(() => connectWS(), 3000);
+  };
+  
+  ws.onerror = (e) => {
+    dbg(`WS ERROR event (attempt #${attempt})`, 'error');
+    // onerror is always followed by onclose, so we handle there
+  };
 }
 
 function setStatus(s){
@@ -608,7 +802,14 @@ function handleMsg(m){
     case 'gpio_states_response': onGPIOStatesResponse(m); break;
     case 'gpio_output_set': onGPIOOutputSet(m); break;
     case 'notification_settings': onNotificationSettings(m); break;
-    case 'error': showToast(m.message || 'Fel', 'error'); break;
+    case 'error':
+      dbg(`Server error: ${m.message}`, 'error');
+      showToast(m.message || 'Fel', 'error');
+      // If we get an error before 'connected', show it on overlay
+      if (document.getElementById('app').style.display !== 'flex') {
+        showConnOverlay('Serverfel', m.message || 'Okant fel', true);
+      }
+      break;
   }
 }
 
@@ -642,8 +843,11 @@ function showToast(text, type='gpio', duration=4000){
 // APP INIT
 // ===================================================================
 function showApp(m){
+  dbg('showApp() called - connection successful!', 'ok');
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
+  hideConnOverlay();
+  wsConnectAttempt = 0;
   setStatus('online');
   if (user) {
     document.getElementById('user-display').textContent = user.displayName || user.username;
@@ -1296,12 +1500,6 @@ async function deleteUser(id){
     loadAdmin();
   } catch(e) {}
 }
-
-// ===================================================================
-// UTILS
-// ===================================================================
-function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
-function esc(s){ return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
 
 // PWA
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

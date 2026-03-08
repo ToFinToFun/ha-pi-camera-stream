@@ -1,5 +1,5 @@
 /**
- * Pi Camera Relay Server v3.0 – Home Assistant Add-on Edition
+ * Pi Camera Relay Server v5.1.0 – Home Assistant Add-on Edition
  * 
  * Anpassad för att köras som HA add-on med:
  * - Ingress-stöd (X-Ingress-Path header)
@@ -44,7 +44,7 @@ const CONFIG = {
 };
 
 console.log('===========================================');
-console.log('  Pi Camera Relay Server v5.0');
+console.log('  Pi Camera Relay Server v5.1.0');
 console.log('  Home Assistant Add-on Edition');
 console.log('===========================================');
 if (IS_HA_ADDON) {
@@ -281,12 +281,14 @@ app.get('/api/dashboard', authMiddleware(), (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '4.0-ha',
+    version: '5.1.0-ha',
     cameras: cameras.size,
     totalViewers: allViewers.size,
     uptime: Math.floor((Date.now() - serverStartTime) / 1000),
     mqtt: mqttHA.connected,
     haAddon: IS_HA_ADDON,
+    ingressPath: INGRESS_PATH || null,
+    wsClients: wss.clients.size,
   });
 });
 
@@ -374,26 +376,41 @@ wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.on('pong', heartbeat);
   const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const upgradeUrl = req.url;
+  const ingressHeader = req.headers['x-ingress-path'] || '';
+  
+  console.log(`[WS] New connection from ${clientIp}`);
+  console.log(`[WS]   URL: ${upgradeUrl}`);
+  console.log(`[WS]   X-Ingress-Path: ${ingressHeader}`);
+  console.log(`[WS]   Headers: ${JSON.stringify({host: req.headers.host, origin: req.headers.origin, 'user-agent': req.headers['user-agent']?.substring(0,60)})}`);
 
   ws.once('message', (data) => {
     try {
       const msg = JSON.parse(data.toString());
+      console.log(`[WS] First message from ${clientIp}: ${JSON.stringify(msg).substring(0,200)}`);
       if (msg.type === 'register_camera') {
         handleCameraRegistration(ws, msg, clientIp);
       } else if (msg.type === 'register_viewer') {
         handleViewerRegistration(ws, msg, clientIp);
       } else {
+        console.log(`[WS] Unknown type: ${msg.type}`);
         ws.send(JSON.stringify({ type: 'error', message: 'Unknown type' }));
         ws.close();
       }
     } catch (err) {
+      console.log(`[WS] Parse error from ${clientIp}: ${err.message}, data: ${data.toString().substring(0,200)}`);
       ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
       ws.close();
     }
   });
 
+  ws.on('close', (code, reason) => {
+    console.log(`[WS] Connection closed from ${clientIp}: code=${code} reason=${reason}`);
+  });
+
   setTimeout(() => {
     if (!ws.role) {
+      console.log(`[WS] Registration timeout for ${clientIp} (no message received in 10s)`);
       ws.send(JSON.stringify({ type: 'error', message: 'Registration timeout' }));
       ws.close();
     }
