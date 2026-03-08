@@ -1,27 +1,92 @@
-#!/usr/bin/with-contenv bashio
+#!/usr/bin/env bash
 # ==============================================================================
-# Pi Camera Stream - Home Assistant Add-on Service Script
-# Runs as S6 legacy service with with-contenv to get SUPERVISOR_TOKEN
+# Pi Camera Stream - Home Assistant Add-on Startup Script
+# Uses init: false, so we need to find SUPERVISOR_TOKEN ourselves
 # ==============================================================================
 
-bashio::log.info "Starting Pi Camera Stream add-on..."
+set -e
 
-# ─── Debug: Check for Supervisor token ───
+echo "[run.sh] Starting Pi Camera Stream add-on v5.0.6..."
+
+# ─── Find SUPERVISOR_TOKEN ───
+# With init: false, S6 with-contenv doesn't run, so SUPERVISOR_TOKEN
+# might not be in the environment. We check multiple locations.
+
+if [ -z "$SUPERVISOR_TOKEN" ]; then
+    # Try S6 container environment files (written by HA Supervisor)
+    for TOKEN_FILE in \
+        /run/s6/container_environment/SUPERVISOR_TOKEN \
+        /var/run/s6/container_environment/SUPERVISOR_TOKEN \
+        /run/s6-rc/container_environment/SUPERVISOR_TOKEN \
+        /etc/s6-overlay/s6-rc.d/SUPERVISOR_TOKEN \
+        /var/run/s6-rc/container_environment/SUPERVISOR_TOKEN; do
+        if [ -f "$TOKEN_FILE" ]; then
+            SUPERVISOR_TOKEN=$(cat "$TOKEN_FILE")
+            echo "[run.sh] Found SUPERVISOR_TOKEN in $TOKEN_FILE"
+            export SUPERVISOR_TOKEN
+            break
+        fi
+    done
+fi
+
+# Try HASSIO_TOKEN as fallback
+if [ -z "$SUPERVISOR_TOKEN" ] && [ -n "$HASSIO_TOKEN" ]; then
+    SUPERVISOR_TOKEN="$HASSIO_TOKEN"
+    echo "[run.sh] Using HASSIO_TOKEN as SUPERVISOR_TOKEN"
+    export SUPERVISOR_TOKEN
+fi
+
+# Last resort: scan all S6 environment files
+if [ -z "$SUPERVISOR_TOKEN" ]; then
+    echo "[run.sh] Scanning for token in S6 directories..."
+    TOKEN_FOUND=""
+    for DIR in /run/s6* /var/run/s6* /etc/s6*; do
+        if [ -d "$DIR" ]; then
+            FOUND=$(find "$DIR" -name "SUPERVISOR_TOKEN" -type f 2>/dev/null | head -1)
+            if [ -n "$FOUND" ]; then
+                SUPERVISOR_TOKEN=$(cat "$FOUND")
+                echo "[run.sh] Found SUPERVISOR_TOKEN in $FOUND"
+                export SUPERVISOR_TOKEN
+                TOKEN_FOUND="yes"
+                break
+            fi
+        fi
+    done
+    
+    if [ -z "$TOKEN_FOUND" ]; then
+        echo "[run.sh] DEBUG: Listing /run/ contents:"
+        ls -la /run/ 2>/dev/null || echo "  /run/ not accessible"
+        echo "[run.sh] DEBUG: Listing /var/run/ contents:"
+        ls -la /var/run/ 2>/dev/null || echo "  /var/run/ not accessible"
+        echo "[run.sh] DEBUG: Looking for any token files:"
+        find / -name "*SUPERVISOR*" -o -name "*HASSIO*" 2>/dev/null | head -20 || echo "  No token files found"
+        echo "[run.sh] DEBUG: All environment variables:"
+        env | sort
+    fi
+fi
+
 if [ -n "$SUPERVISOR_TOKEN" ]; then
-    bashio::log.info "Supervisor token available (${#SUPERVISOR_TOKEN} chars)"
+    echo "[run.sh] SUPERVISOR_TOKEN available (${#SUPERVISOR_TOKEN} chars)"
 else
-    bashio::log.warning "No SUPERVISOR_TOKEN found in environment"
+    echo "[run.sh] WARNING: No SUPERVISOR_TOKEN found anywhere"
 fi
 
 # ─── Read configuration from HA options ───
-CAMERA_SECRET=$(bashio::config 'camera_secret')
-JWT_SECRET=$(bashio::config 'jwt_secret')
-MQTT_ENABLED=$(bashio::config 'mqtt_enabled')
-MQTT_TOPIC_PREFIX=$(bashio::config 'mqtt_topic_prefix')
-RECORDING_ENABLED=$(bashio::config 'recording_enabled')
-RECORDING_PATH=$(bashio::config 'recording_path')
-MAX_RECORDING_SIZE_MB=$(bashio::config 'max_recording_size_mb')
-LOG_LEVEL=$(bashio::config 'log_level')
+CONFIG_PATH=/data/options.json
+
+if [ ! -f "$CONFIG_PATH" ]; then
+    echo "[run.sh] ERROR: Options file not found at $CONFIG_PATH"
+    exit 1
+fi
+
+CAMERA_SECRET=$(jq -r '.camera_secret // ""' "$CONFIG_PATH")
+JWT_SECRET=$(jq -r '.jwt_secret // ""' "$CONFIG_PATH")
+MQTT_ENABLED=$(jq -r '.mqtt_enabled // false' "$CONFIG_PATH")
+MQTT_TOPIC_PREFIX=$(jq -r '.mqtt_topic_prefix // "pi_camera_stream"' "$CONFIG_PATH")
+RECORDING_ENABLED=$(jq -r '.recording_enabled // true' "$CONFIG_PATH")
+RECORDING_PATH=$(jq -r '.recording_path // "/media/pi-camera-recordings"' "$CONFIG_PATH")
+MAX_RECORDING_SIZE_MB=$(jq -r '.max_recording_size_mb // 1000' "$CONFIG_PATH")
+LOG_LEVEL=$(jq -r '.log_level // "info"' "$CONFIG_PATH")
 
 # Generate secrets if not set
 if [ -z "$CAMERA_SECRET" ] || [ "$CAMERA_SECRET" = "null" ] || [ "$CAMERA_SECRET" = "" ]; then
@@ -30,8 +95,7 @@ if [ -z "$CAMERA_SECRET" ] || [ "$CAMERA_SECRET" = "null" ] || [ "$CAMERA_SECRET
     else
         CAMERA_SECRET=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
         echo "$CAMERA_SECRET" > /data/camera_secret
-        bashio::log.info "Generated new camera secret."
-        bashio::log.info "Camera secret: $CAMERA_SECRET"
+        echo "[run.sh] Generated new camera secret: $CAMERA_SECRET"
     fi
 fi
 
@@ -50,26 +114,45 @@ MQTT_PORT=""
 MQTT_USER=""
 MQTT_PASS=""
 
-if bashio::config.true 'mqtt_enabled'; then
-    bashio::log.info "MQTT is enabled, looking for broker..."
+if [ "$MQTT_ENABLED" = "true" ]; then
+    echo "[run.sh] MQTT is enabled, looking for broker..."
     
-    if bashio::services.available "mqtt"; then
-        MQTT_HOST=$(bashio::services mqtt "host")
-        MQTT_PORT=$(bashio::services mqtt "port")
-        MQTT_USER=$(bashio::services mqtt "username")
-        MQTT_PASS=$(bashio::services mqtt "password")
-        bashio::log.info "MQTT broker found: ${MQTT_HOST}:${MQTT_PORT} (user: ${MQTT_USER})"
+    if [ -n "$SUPERVISOR_TOKEN" ]; then
+        MQTT_RESPONSE=$(curl -s -f -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            http://supervisor/services/mqtt 2>&1 || echo '{"result":"error"}')
+        
+        MQTT_RESULT=$(echo "$MQTT_RESPONSE" | jq -r '.result // "error"' 2>/dev/null || echo "error")
+        
+        if [ "$MQTT_RESULT" = "ok" ]; then
+            MQTT_HOST=$(echo "$MQTT_RESPONSE" | jq -r '.data.host // ""' 2>/dev/null || echo "")
+            MQTT_PORT=$(echo "$MQTT_RESPONSE" | jq -r '.data.port // "1883"' 2>/dev/null || echo "1883")
+            MQTT_USER=$(echo "$MQTT_RESPONSE" | jq -r '.data.username // ""' 2>/dev/null || echo "")
+            MQTT_PASS=$(echo "$MQTT_RESPONSE" | jq -r '.data.password // ""' 2>/dev/null || echo "")
+            
+            if [ -n "$MQTT_HOST" ] && [ "$MQTT_HOST" != "null" ]; then
+                echo "[run.sh] MQTT broker found: ${MQTT_HOST}:${MQTT_PORT} (user: ${MQTT_USER})"
+            else
+                echo "[run.sh] MQTT API returned OK but no host. Disabling MQTT."
+                MQTT_ENABLED="false"
+            fi
+        else
+            echo "[run.sh] MQTT service not available. Disabling MQTT."
+            MQTT_ENABLED="false"
+        fi
     else
-        bashio::log.warning "MQTT enabled but no MQTT broker found."
-        bashio::log.warning "Make sure Mosquitto broker add-on is installed and running."
-        bashio::log.warning "Disabling MQTT to prevent reconnect loops."
+        echo "[run.sh] No Supervisor token - cannot query MQTT. Disabling MQTT."
         MQTT_ENABLED="false"
     fi
 fi
 
 # ─── Get ingress entry path ───
-INGRESS_PATH=$(bashio::addon.ingress_entry)
-bashio::log.info "Ingress path: ${INGRESS_PATH}"
+INGRESS_PATH=""
+if [ -n "$SUPERVISOR_TOKEN" ]; then
+    ADDON_INFO=$(curl -s -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        http://supervisor/addons/self/info 2>/dev/null || echo "{}")
+    INGRESS_PATH=$(echo "$ADDON_INFO" | jq -r '.data.ingress_entry // ""' 2>/dev/null || echo "")
+    echo "[run.sh] Ingress path: ${INGRESS_PATH}"
+fi
 
 # ─── Create directories ───
 mkdir -p "${RECORDING_PATH}" 2>/dev/null || true
@@ -96,20 +179,20 @@ export LOG_LEVEL
 export DB_PATH=/data/db
 export NODE_ENV=production
 
-bashio::log.info "============================================"
-bashio::log.info "Configuration:"
-bashio::log.info "  - Ingress path: ${INGRESS_PATH}"
-bashio::log.info "  - MQTT enabled: ${MQTT_ENABLED}"
+echo "[run.sh] ============================================"
+echo "[run.sh] Configuration:"
+echo "[run.sh]   - Ingress path: ${INGRESS_PATH}"
+echo "[run.sh]   - MQTT enabled: ${MQTT_ENABLED}"
 if [ "$MQTT_ENABLED" = "true" ]; then
-    bashio::log.info "  - MQTT host: ${MQTT_HOST}:${MQTT_PORT}"
+    echo "[run.sh]   - MQTT host: ${MQTT_HOST}:${MQTT_PORT}"
 fi
-bashio::log.info "  - Recording enabled: ${RECORDING_ENABLED}"
-bashio::log.info "  - Recording path: ${RECORDING_PATH}"
-bashio::log.info "  - Log level: ${LOG_LEVEL}"
-bashio::log.info "  - Camera secret: ${CAMERA_SECRET:0:4}****"
-bashio::log.info "============================================"
+echo "[run.sh]   - Recording enabled: ${RECORDING_ENABLED}"
+echo "[run.sh]   - Recording path: ${RECORDING_PATH}"
+echo "[run.sh]   - Log level: ${LOG_LEVEL}"
+echo "[run.sh]   - Camera secret: ${CAMERA_SECRET:0:4}****"
+echo "[run.sh] ============================================"
 
 # ─── Start the relay server ───
-bashio::log.info "Starting relay server on port 8099..."
+echo "[run.sh] Starting relay server on port 8099..."
 cd /app/server
 exec node server.js

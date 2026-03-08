@@ -20,9 +20,12 @@ RUN cd server && npm install --production
 COPY server/ ./server/
 COPY viewer/ ./viewer/
 
-# Copy run.sh as S6 legacy service (gets with-contenv and SUPERVISOR_TOKEN)
-COPY run.sh /etc/services.d/pi-camera-stream/run
-RUN chmod a+x /etc/services.d/pi-camera-stream/run
+# Copy run script
+COPY run.sh /app/run.sh
+RUN chmod a+x /app/run.sh
+
+# Start directly (init: false in config.yaml)
+CMD ["/app/run.sh"]
 
 # Labels
 LABEL \
