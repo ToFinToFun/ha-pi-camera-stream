@@ -108,18 +108,36 @@ if [ -z "$JWT_SECRET" ] || [ "$JWT_SECRET" = "null" ] || [ "$JWT_SECRET" = "" ];
     fi
 fi
 
-# ─── Get MQTT credentials from HA if available ───
+# ─── Get MQTT credentials ───
+# Priority: 1) Manual config  2) Supervisor API  3) Fallback to core-mosquitto
 MQTT_HOST=""
 MQTT_PORT=""
 MQTT_USER=""
 MQTT_PASS=""
 
+# Read manual MQTT settings from config
+MQTT_HOST_MANUAL=$(jq -r '.mqtt_host // ""' "$CONFIG_PATH")
+MQTT_PORT_MANUAL=$(jq -r '.mqtt_port // 1883' "$CONFIG_PATH")
+MQTT_USER_MANUAL=$(jq -r '.mqtt_username // ""' "$CONFIG_PATH")
+MQTT_PASS_MANUAL=$(jq -r '.mqtt_password // ""' "$CONFIG_PATH")
+
 if [ "$MQTT_ENABLED" = "true" ]; then
     echo "[run.sh] MQTT is enabled, looking for broker..."
     
-    if [ -n "$SUPERVISOR_TOKEN" ]; then
+    # Method 1: Manual configuration
+    if [ -n "$MQTT_HOST_MANUAL" ] && [ "$MQTT_HOST_MANUAL" != "null" ] && [ "$MQTT_HOST_MANUAL" != "" ]; then
+        MQTT_HOST="$MQTT_HOST_MANUAL"
+        MQTT_PORT="$MQTT_PORT_MANUAL"
+        MQTT_USER="$MQTT_USER_MANUAL"
+        MQTT_PASS="$MQTT_PASS_MANUAL"
+        echo "[run.sh] Using manual MQTT config: ${MQTT_HOST}:${MQTT_PORT}"
+    
+    # Method 2: Supervisor API
+    elif [ -n "$SUPERVISOR_TOKEN" ]; then
+        echo "[run.sh] Querying Supervisor for MQTT service..."
         MQTT_RESPONSE=$(curl -s -f -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
             http://supervisor/services/mqtt 2>&1 || echo '{"result":"error"}')
+        echo "[run.sh] MQTT API response: $MQTT_RESPONSE"
         
         MQTT_RESULT=$(echo "$MQTT_RESPONSE" | jq -r '.result // "error"' 2>/dev/null || echo "error")
         
@@ -130,18 +148,28 @@ if [ "$MQTT_ENABLED" = "true" ]; then
             MQTT_PASS=$(echo "$MQTT_RESPONSE" | jq -r '.data.password // ""' 2>/dev/null || echo "")
             
             if [ -n "$MQTT_HOST" ] && [ "$MQTT_HOST" != "null" ]; then
-                echo "[run.sh] MQTT broker found: ${MQTT_HOST}:${MQTT_PORT} (user: ${MQTT_USER})"
+                echo "[run.sh] MQTT broker found via API: ${MQTT_HOST}:${MQTT_PORT} (user: ${MQTT_USER})"
             else
-                echo "[run.sh] MQTT API returned OK but no host. Disabling MQTT."
-                MQTT_ENABLED="false"
+                echo "[run.sh] MQTT API returned OK but no host. Trying fallback..."
+                MQTT_HOST=""
             fi
         else
-            echo "[run.sh] MQTT service not available. Disabling MQTT."
+            echo "[run.sh] MQTT service not found via API. Trying fallback..."
+        fi
+    fi
+    
+    # Method 3: Fallback - try core-mosquitto (HA internal DNS name)
+    if [ -z "$MQTT_HOST" ] || [ "$MQTT_HOST" = "null" ]; then
+        echo "[run.sh] Trying fallback: core-mosquitto:1883..."
+        if curl -s --connect-timeout 3 core-mosquitto:1883 >/dev/null 2>&1 || \
+           nc -z -w3 core-mosquitto 1883 2>/dev/null; then
+            MQTT_HOST="core-mosquitto"
+            MQTT_PORT="1883"
+            echo "[run.sh] Fallback success: core-mosquitto is reachable"
+        else
+            echo "[run.sh] Fallback failed: core-mosquitto not reachable. Disabling MQTT."
             MQTT_ENABLED="false"
         fi
-    else
-        echo "[run.sh] No Supervisor token - cannot query MQTT. Disabling MQTT."
-        MQTT_ENABLED="false"
     fi
 fi
 

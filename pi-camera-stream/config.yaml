@@ -1,5 +1,5 @@
 name: "Pi Camera Stream"
-version: "5.0.6"
+version: "5.0.7"
 slug: "pi_camera_stream"
 description: "Stream video from Raspberry Pi cameras and Axis/RTSP network cameras. View multiple cameras in a grid, with motion detection, recording, PTZ control, and AI object detection."
 url: "https://github.com/ToFinToFun/ha-pi-camera-stream"
@@ -35,6 +35,10 @@ options:
   camera_secret: ""
   jwt_secret: ""
   mqtt_enabled: false
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
   mqtt_topic_prefix: "pi_camera_stream"
   recording_enabled: true
   recording_path: "/media/pi-camera-recordings"
@@ -44,6 +48,10 @@ schema:
   camera_secret: "str"
   jwt_secret: "str"
   mqtt_enabled: "bool"
+  mqtt_host: "str"
+  mqtt_port: "int"
+  mqtt_username: "str"
+  mqtt_password: "str"
   mqtt_topic_prefix: "str"
   recording_enabled: "bool"
   recording_path: "str"
