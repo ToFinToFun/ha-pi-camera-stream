@@ -19,9 +19,10 @@ RUN cd server && npm install --production
 # Copy application files
 COPY server/ ./server/
 COPY viewer/ ./viewer/
-COPY run.sh /
 
-RUN chmod a+x /run.sh
+# Copy run.sh as S6 legacy service (gets with-contenv and SUPERVISOR_TOKEN)
+COPY run.sh /etc/services.d/pi-camera-stream/run
+RUN chmod a+x /etc/services.d/pi-camera-stream/run
 
 # Labels
 LABEL \
@@ -29,5 +30,3 @@ LABEL \
     io.hass.description="Stream video from Pi cameras and Axis/RTSP network cameras" \
     io.hass.type="addon" \
     io.hass.version="${BUILD_VERSION}"
-
-CMD [ "/run.sh" ]
