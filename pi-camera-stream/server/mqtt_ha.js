@@ -58,6 +58,13 @@ class MQTTHomeAssistant {
   }
 
   connect() {
+    // Don't try to connect if host is empty or invalid
+    if (!this.host || this.host === 'null' || this.host === '') {
+      console.log('[MQTT] No valid MQTT host configured. MQTT disabled.');
+      this.enabled = false;
+      return;
+    }
+
     const url = `mqtt://${this.host}:${this.port}`;
     console.log(`[MQTT] Connecting to ${url}...`);
 

@@ -15,6 +15,9 @@ if [ ! -f "$CONFIG_PATH" ]; then
     exit 1
 fi
 
+echo "[DEBUG] Options file content:"
+cat "$CONFIG_PATH" | jq '.' 2>/dev/null || cat "$CONFIG_PATH"
+
 CAMERA_SECRET=$(jq -r '.camera_secret // ""' "$CONFIG_PATH")
 JWT_SECRET=$(jq -r '.jwt_secret // ""' "$CONFIG_PATH")
 MQTT_ENABLED=$(jq -r '.mqtt_enabled // false' "$CONFIG_PATH")
@@ -52,21 +55,37 @@ MQTT_USER=""
 MQTT_PASS=""
 
 if [ "$MQTT_ENABLED" = "true" ]; then
-    # Try to get MQTT info from Supervisor API
+    echo "[INFO] MQTT is enabled, looking for broker..."
+    
     if [ -n "$SUPERVISOR_TOKEN" ]; then
+        echo "[DEBUG] Supervisor token available, querying services/mqtt..."
         MQTT_RESPONSE=$(curl -s -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-            http://supervisor/services/mqtt 2>/dev/null || echo "{}")
-        MQTT_HOST=$(echo "$MQTT_RESPONSE" | jq -r '.data.host // ""' 2>/dev/null || echo "")
-        MQTT_PORT=$(echo "$MQTT_RESPONSE" | jq -r '.data.port // ""' 2>/dev/null || echo "")
-        MQTT_USER=$(echo "$MQTT_RESPONSE" | jq -r '.data.username // ""' 2>/dev/null || echo "")
-        MQTT_PASS=$(echo "$MQTT_RESPONSE" | jq -r '.data.password // ""' 2>/dev/null || echo "")
-        if [ -n "$MQTT_HOST" ] && [ "$MQTT_HOST" != "null" ]; then
-            echo "[INFO] MQTT broker found: ${MQTT_HOST}:${MQTT_PORT}"
+            http://supervisor/services/mqtt 2>/dev/null || echo '{"result":"error"}')
+        echo "[DEBUG] MQTT API response: $MQTT_RESPONSE"
+        
+        MQTT_RESULT=$(echo "$MQTT_RESPONSE" | jq -r '.result // "error"' 2>/dev/null || echo "error")
+        
+        if [ "$MQTT_RESULT" = "ok" ]; then
+            MQTT_HOST=$(echo "$MQTT_RESPONSE" | jq -r '.data.host // ""' 2>/dev/null || echo "")
+            MQTT_PORT=$(echo "$MQTT_RESPONSE" | jq -r '.data.port // "1883"' 2>/dev/null || echo "1883")
+            MQTT_USER=$(echo "$MQTT_RESPONSE" | jq -r '.data.username // ""' 2>/dev/null || echo "")
+            MQTT_PASS=$(echo "$MQTT_RESPONSE" | jq -r '.data.password // ""' 2>/dev/null || echo "")
+            
+            if [ -n "$MQTT_HOST" ] && [ "$MQTT_HOST" != "null" ] && [ "$MQTT_HOST" != "" ]; then
+                echo "[INFO] MQTT broker found: ${MQTT_HOST}:${MQTT_PORT} (user: ${MQTT_USER})"
+            else
+                echo "[WARN] MQTT API returned OK but no host found. Disabling MQTT."
+                MQTT_ENABLED="false"
+            fi
         else
-            echo "[WARN] MQTT enabled but no MQTT broker found in Home Assistant"
+            echo "[WARN] MQTT service not available from Supervisor API (result: $MQTT_RESULT)"
+            echo "[WARN] Make sure Mosquitto broker add-on is installed and running."
+            echo "[WARN] Disabling MQTT to prevent reconnect loops."
+            MQTT_ENABLED="false"
         fi
     else
-        echo "[WARN] MQTT enabled but no Supervisor token available"
+        echo "[WARN] MQTT enabled but no Supervisor token available. Disabling MQTT."
+        MQTT_ENABLED="false"
     fi
 fi
 
@@ -80,7 +99,7 @@ if [ -n "$SUPERVISOR_TOKEN" ]; then
 fi
 
 # ─── Create directories ───
-mkdir -p "${RECORDING_PATH}"
+mkdir -p "${RECORDING_PATH}" 2>/dev/null || true
 mkdir -p /data/db
 
 # ─── Export environment variables ───
@@ -104,12 +123,18 @@ export LOG_LEVEL
 export DB_PATH=/data/db
 export NODE_ENV=production
 
-echo "[INFO] Configuration loaded:"
+echo "[INFO] ============================================"
+echo "[INFO] Configuration:"
 echo "[INFO]   - Ingress path: ${INGRESS_PATH}"
 echo "[INFO]   - MQTT enabled: ${MQTT_ENABLED}"
+if [ "$MQTT_ENABLED" = "true" ]; then
+    echo "[INFO]   - MQTT host: ${MQTT_HOST}:${MQTT_PORT}"
+fi
 echo "[INFO]   - Recording enabled: ${RECORDING_ENABLED}"
 echo "[INFO]   - Recording path: ${RECORDING_PATH}"
 echo "[INFO]   - Log level: ${LOG_LEVEL}"
+echo "[INFO]   - Camera secret: ${CAMERA_SECRET:0:4}****"
+echo "[INFO] ============================================"
 
 # ─── Start the relay server ───
 echo "[INFO] Starting relay server on port 8099..."
