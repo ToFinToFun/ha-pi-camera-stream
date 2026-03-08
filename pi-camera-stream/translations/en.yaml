@@ -1,0 +1,25 @@
+configuration:
+  camera_secret:
+    name: Camera Secret
+    description: "Secret key that Pi clients use to authenticate. Leave empty to auto-generate (shown in logs on first start)."
+  jwt_secret:
+    name: JWT Secret
+    description: "Secret key for JWT tokens. Leave empty to auto-generate."
+  mqtt_enabled:
+    name: Enable MQTT
+    description: "Publish motion events and camera status to Home Assistant via MQTT. Requires an MQTT broker (e.g., Mosquitto add-on)."
+  mqtt_topic_prefix:
+    name: MQTT Topic Prefix
+    description: "Prefix for MQTT topics (e.g., pi_camera_stream/motion/camera_id)."
+  recording_enabled:
+    name: Enable Recording
+    description: "Enable recording of video clips on motion events."
+  recording_path:
+    name: Recording Path
+    description: "Path to store recordings. Use /media/pi-camera-recordings to store in HA media folder."
+  max_recording_size_mb:
+    name: Max Recording Size (MB)
+    description: "Maximum total size of recordings before old ones are deleted."
+  log_level:
+    name: Log Level
+    description: "Logging verbosity level."

@@ -1,0 +1,25 @@
+configuration:
+  camera_secret:
+    name: Kamerahemlighet
+    description: "Hemlig nyckel som Pi-klienter använder för att autentisera. Lämna tomt för att auto-generera (visas i loggen vid första start)."
+  jwt_secret:
+    name: JWT-hemlighet
+    description: "Hemlig nyckel för JWT-tokens. Lämna tomt för att auto-generera."
+  mqtt_enabled:
+    name: Aktivera MQTT
+    description: "Publicera rörelsehändelser och kamerastatus till Home Assistant via MQTT. Kräver en MQTT-broker (t.ex. Mosquitto-tillägget)."
+  mqtt_topic_prefix:
+    name: MQTT-topicprefix
+    description: "Prefix för MQTT-topics (t.ex. pi_camera_stream/motion/camera_id)."
+  recording_enabled:
+    name: Aktivera inspelning
+    description: "Aktivera inspelning av videoklipp vid rörelsehändelser."
+  recording_path:
+    name: Inspelningssökväg
+    description: "Sökväg för att lagra inspelningar. Använd /media/pi-camera-recordings för att lagra i HA:s mediamapp."
+  max_recording_size_mb:
+    name: Max inspelningsstorlek (MB)
+    description: "Maximal total storlek på inspelningar innan gamla raderas."
+  log_level:
+    name: Loggnivå
+    description: "Detaljnivå för loggning."

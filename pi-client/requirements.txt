@@ -1,0 +1,20 @@
+# Kärn-beroenden (krävs alltid)
+websockets>=12.0
+Pillow>=10.0
+pyyaml>=6.0
+requests>=2.31
+numpy>=1.24
+
+# Valfritt: För RTSP-kameror och USB-kameror (OpenCV)
+# opencv-python-headless>=4.8
+
+# Valfritt: För Raspberry Pi Camera Module
+# picamera2 (installeras via apt: sudo apt install python3-picamera2)
+
+# Valfritt: För push-notiser
+# python-telegram-bot>=20.0  (Telegram)
+# requests (redan inkluderat, används för Pushover)
+
+# Valfritt: För AI-objektdetektering
+# ultralytics>=8.0  (YOLOv8 - kräver ~2GB disk)
+# tflite-runtime>=2.14  (MobileNet SSD - lättare alternativ)

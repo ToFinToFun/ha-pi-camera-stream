@@ -1,0 +1,276 @@
+# ============================================================================
+# Pi Camera Client – Konfigurationsfil
+# ============================================================================
+# Kopiera denna fil till cameras.yaml och anpassa efter dina kameror.
+#
+# Starta med:
+#   python camera_client.py --config cameras.yaml
+#
+# HOME ASSISTANT ADD-ON:
+#   Serverns URL hittar du i HA-tilläggets konfiguration.
+#   Kamerahemligheten visas i viewer-appens sidopanel (som admin).
+#   URL-formatet beror på hur du når din HA utifrån:
+#     - Via Nabu Casa:  wss://xxxxxxxx.ui.nabu.casa
+#     - Via egen domän: wss://ha.dindomän.se
+#     - Lokalt:         ws://homeassistant.local:8099
+# ============================================================================
+
+# Klient-namn (visas i viewer-appen och notiser)
+client_name: "Stugan"
+
+# Relay-server inställningar
+server:
+  url: "ws://homeassistant.local:8099"
+  secret: "ändra-till-din-hemliga-nyckel"
+  reconnect_delay: 1
+  max_reconnect_delay: 60
+
+# Lista med kameror att strömma
+cameras:
+
+  # ── Axis nätverkskamera (VAPIX HTTP API) ──────────────────────────────
+  - type: axis
+    camera_id: "axis-entre"
+    name: "Entré"
+    host: "192.168.1.100"
+    username: "root"
+    password: "ditt-losenord"
+    port: 80
+    use_https: false
+    camera_number: 1
+    mode: "snapshot"
+    width: 1280
+    height: 720
+    fps: 10
+    quality: 70
+
+  # ── Axis kamera via RTSP ──────────────────────────────────────────────
+  - type: rtsp
+    camera_id: "axis-parkering"
+    name: "Parkering"
+    rtsp_url: "rtsp://root:ditt-losenord@192.168.1.101/axis-media/media.amp?videocodec=h264&resolution=1280x720"
+    width: 1280
+    height: 720
+    fps: 10
+    quality: 70
+
+  # ── Generisk RTSP-kamera (Hikvision, Dahua, etc.) ────────────────────
+  #- type: rtsp
+  #  camera_id: "hikvision-baksida"
+  #  name: "Baksida"
+  #  rtsp_url: "rtsp://admin:password@192.168.1.102/Streaming/Channels/101"
+  #  width: 1920
+  #  height: 1080
+  #  fps: 5
+  #  quality: 60
+
+  # ── Raspberry Pi Camera Module ────────────────────────────────────────
+  #- type: picamera
+  #  camera_id: "pi-cam"
+  #  name: "Pi Kamera"
+  #  width: 1280
+  #  height: 720
+  #  fps: 15
+  #  quality: 70
+
+  # ── USB-kamera ────────────────────────────────────────────────────────
+  #- type: usb
+  #  camera_id: "usb-cam"
+  #  name: "USB Kamera"
+  #  device: 0
+  #  width: 640
+  #  height: 480
+  #  fps: 15
+  #  quality: 70
+
+  # ── Testkamera (för utveckling) ───────────────────────────────────────
+  #- type: test
+  #  camera_id: "test-1"
+  #  name: "Testkamera 1"
+  #  width: 640
+  #  height: 480
+  #  fps: 5
+  #  quality: 70
+
+# ── Rörelsedetektering ─────────────────────────────────────────────────
+motion:
+  enabled: false
+  sensitivity: 50
+  min_area_percent: 1.0
+  min_frames: 2
+  cooldown: 5
+
+# ── Push-notiser ────────────────────────────────────────────────────────
+# Stöder per-kamera konfiguration och tysta timmar.
+notifications:
+  enabled: false
+  cooldown: 60
+  include_snapshot: true
+  notify_motion: true
+  notify_gpio: true
+  notify_offline: true
+  # Tysta timmar (inga notiser skickas under denna period, utom priority):
+  # quiet_hours:
+  #   start: "23:00"
+  #   end: "06:00"
+  #   allow_priority: true
+  #
+  # Per-kamera inställningar (override globala):
+  # cameras:
+  #   axis-entre:
+  #     motion: true
+  #     gpio: true
+  #     objects: ["person"]      # Bara notifiera om person detekteras
+  #     cooldown: 120
+  #   axis-parkering:
+  #     motion: false            # Ingen notis vid rörelse på denna kamera
+  #
+  # Telegram:
+  # telegram:
+  #   bot_token: "123456:ABC-DEF"
+  #   chat_id: "-100123456789"
+  #
+  # Pushover:
+  # pushover:
+  #   user_key: "din-user-key"
+  #   app_token: "din-api-token"
+  #
+  # Home Assistant Companion App:
+  # ha_notify:
+  #   url: "http://homeassistant.local:8123"
+  #   token: "din-long-lived-access-token"
+  #   service: "notify.mobile_app_din_telefon"
+
+# ── AI Objektdetektering ───────────────────────────────────────────────
+object_detection:
+  enabled: false
+  model: "mobilenet"
+  confidence: 0.5
+  detect_classes:
+    - person
+    - car
+    - cat
+    - dog
+
+# ── GPIO (Digitala in/utgångar) ────────────────────────────────────────
+# Kräver Raspberry Pi med RPi.GPIO eller gpiozero.
+# På andra enheter (x86, Orange Pi) körs GPIO i simuleringsläge.
+#
+# Pin-nummer använder BCM-numrering (inte fysisk pin-numrering).
+# Se: https://pinout.xyz för referens.
+gpio:
+  enabled: false
+
+  # Digitala ingångar (sensorer, knappar)
+  inputs:
+    # Dörrsensor (magnetkontakt) på GPIO 17
+    - pin: 17
+      name: "dorr_entre"
+      active_low: true          # Sensor är aktiv när kretsen bryts (NC)
+      pull_up: true             # Intern pull-up resistor
+      debounce_ms: 200
+
+    # PIR-rörelsesensor på GPIO 27
+    - pin: 27
+      name: "pir_vardagsrum"
+      active_low: false
+      pull_up: false
+      debounce_ms: 500
+
+    # Larmknapp på GPIO 22
+    - pin: 22
+      name: "larmknapp"
+      active_low: true
+      pull_up: true
+      debounce_ms: 300
+
+  # Digitala utgångar (reläer, lampor)
+  outputs:
+    # Relä för utomhusbelysning på GPIO 18
+    - pin: 18
+      name: "belysning_ute"
+      active_low: false         # HIGH = PÅ
+      default_state: false      # Av vid start
+
+    # Relä för värme på GPIO 23
+    - pin: 23
+      name: "varme"
+      active_low: false
+      default_state: false
+
+    # Relä för siren/larm på GPIO 24
+    - pin: 24
+      name: "siren"
+      active_low: false
+      default_state: false
+
+    # Relä för inomhusbelysning på GPIO 25
+    - pin: 25
+      name: "belysning_inne"
+      active_low: false
+      default_state: false
+
+  # Scener – fördefinierade kombinationer av utgångar
+  # Aktiveras med en knapp i viewer-appen eller via automation.
+  scenes:
+    - name: "stuga_vinter"
+      label: "Stugan Vinter"
+      icon: "snowflake"
+      description: "Slå på värme och inomhusbelysning"
+      actions:
+        - output: "varme"
+          state: true
+        - output: "belysning_inne"
+          state: true
+
+    - name: "stuga_hemkomst"
+      label: "Hemkomst"
+      icon: "home"
+      description: "Tänd all belysning"
+      actions:
+        - output: "belysning_ute"
+          state: true
+        - output: "belysning_inne"
+          state: true
+
+    - name: "stuga_lamna"
+      label: "Lämna stugan"
+      icon: "lock"
+      description: "Släck allt och stäng av värme"
+      actions:
+        - output: "belysning_ute"
+          state: false
+        - output: "belysning_inne"
+          state: false
+        - output: "varme"
+          state: false
+
+    - name: "larm_pa"
+      label: "Larm PÅ"
+      icon: "shield"
+      description: "Aktivera siren i 30 sekunder"
+      actions:
+        - output: "siren"
+          state: true
+        - output: "belysning_ute"
+          state: true
+
+    - name: "larm_av"
+      label: "Larm AV"
+      icon: "shield-off"
+      description: "Stäng av siren"
+      actions:
+        - output: "siren"
+          state: false
+
+# ── Lokal lagring ──────────────────────────────────────────────────────
+# Inspelningar sparas lokalt på denna enhet.
+local_storage:
+  enabled: true
+  path: "/var/lib/pi-camera/recordings"
+  max_size_mb: 5000            # Max 5 GB
+  max_age_days: 30             # Radera klipp äldre än 30 dagar
+  record_on_motion: true       # Spela in vid rörelse
+  record_on_gpio: true         # Spela in vid GPIO-event
+  pre_record_seconds: 3        # Spara 3 sek före rörelse
+  post_record_seconds: 10      # Spara 10 sek efter rörelse

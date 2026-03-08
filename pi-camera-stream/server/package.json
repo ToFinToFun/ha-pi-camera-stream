@@ -1,0 +1,20 @@
+{
+  "name": "pi-camera-relay-server",
+  "version": "3.0.0",
+  "description": "Full-featured WebSocket relay server for camera streaming with JWT auth, recording, and PTZ",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "express": "^4.18.2",
+    "uuid": "^9.0.0",
+    "jsonwebtoken": "^9.0.0",
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.0.0",
+    "multer": "^1.4.5-lts.1",
+    "mqtt": "^5.3.0"
+  }
+}

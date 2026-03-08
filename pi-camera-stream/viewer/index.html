@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Pi Camera Stream</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0f172a;--bg2:#1e293b;--bg3:#334155;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
+  --blue:#3b82f6;--blue2:#2563eb;--green:#22c55e;--red:#ef4444;
+  --yellow:#eab308;--orange:#f97316;--purple:#a855f7;--cyan:#06b6d4;
+  --sidebar:280px;--topbar:56px;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg);color:var(--text);overflow:hidden;height:100vh}
+button{cursor:pointer;border:none;background:none;color:inherit;font:inherit}
+input,select{font:inherit;color:var(--text);background:var(--bg3);border:1px solid var(--bg3);
+  border-radius:6px;padding:8px 12px;outline:none}
+input:focus,select:focus{border-color:var(--blue)}
+a{color:var(--blue);text-decoration:none}
+
+/* Login */
+#login-screen{display:flex;align-items:center;justify-content:center;
+  height:100vh;background:linear-gradient(135deg,#0f172a,#1e293b)}
+.login-box{background:var(--bg2);border-radius:16px;padding:40px;width:380px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.login-box h1{text-align:center;margin-bottom:8px;font-size:24px}
+.login-box p{text-align:center;color:var(--text2);margin-bottom:24px;font-size:14px}
+.login-box .logo{text-align:center;font-size:48px;margin-bottom:16px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:4px}
+.form-group input,.form-group select{width:100%}
+.btn{display:block;width:100%;padding:12px;border-radius:8px;font-weight:600;font-size:15px;transition:all .2s}
+.btn-primary{background:var(--blue);color:#fff}
+.btn-primary:hover{background:var(--blue2)}
+.btn-sm{width:auto;padding:6px 16px;font-size:13px;display:inline-block}
+.btn-danger{background:var(--red);color:#fff}
+.btn-success{background:var(--green);color:#fff}
+.btn-purple{background:var(--purple);color:#fff}
+.btn-cyan{background:var(--cyan);color:#fff}
+.login-error{color:var(--red);text-align:center;font-size:13px;margin-top:8px;display:none}
+.secret-box{background:var(--bg);border-radius:8px;padding:12px 16px;margin-top:16px;font-size:13px}
+.secret-box code{background:var(--bg3);padding:2px 8px;border-radius:4px;font-family:monospace;user-select:all}
+
+/* Layout */
+#app{display:none;flex-direction:column;height:100vh}
+.topbar{height:var(--topbar);background:var(--bg2);display:flex;align-items:center;padding:0 16px;gap:12px;border-bottom:1px solid var(--bg3);flex-shrink:0}
+.logo-sm{font-size:18px;font-weight:700;white-space:nowrap}
+.logo-sm span{font-size:14px;font-weight:400;color:var(--text2)}
+.topbar-nav{display:flex;gap:4px;margin-left:16px;flex:1;overflow-x:auto}
+.topbar-nav button{padding:8px 14px;border-radius:6px;font-size:13px;white-space:nowrap;transition:.15s}
+.topbar-nav button:hover{background:var(--bg3)}
+.topbar-nav button.active{background:var(--blue);color:#fff}
+.topbar-right{display:flex;align-items:center;gap:8px;margin-left:auto}
+.user-info{font-size:13px;white-space:nowrap}
+.main-area{display:flex;flex:1;overflow:hidden}
+.sidebar{width:var(--sidebar);background:var(--bg2);border-right:1px solid var(--bg3);overflow-y:auto;flex-shrink:0;padding:16px 0}
+.sidebar h3{padding:0 16px 12px;font-size:14px;color:var(--text2)}
+.cam-list{display:flex;flex-direction:column;gap:2px}
+.cam-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;transition:.15s}
+.cam-item:hover{background:rgba(255,255,255,.04)}
+.cam-item.active{background:rgba(59,130,246,.1)}
+.cam-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.cam-dot.online{background:var(--green)}
+.cam-dot.offline{background:var(--red)}
+.cam-info{flex:1;min-width:0}
+.cam-name{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cam-meta{font-size:11px;color:var(--text3)}
+.cam-toggle{position:relative;width:36px;height:20px;flex-shrink:0}
+.cam-toggle input{opacity:0;width:0;height:0}
+.cam-toggle .slider{position:absolute;inset:0;background:var(--bg3);border-radius:10px;transition:.2s;cursor:pointer}
+.cam-toggle .slider::before{content:'';position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;left:2px;top:2px;transition:.2s}
+.cam-toggle input:checked+.slider{background:var(--blue)}
+.cam-toggle input:checked+.slider::before{transform:translateX(16px)}
+.content{flex:1;overflow:hidden;position:relative}
+
+/* Camera Grid */
+.grid-controls{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--bg2);border-bottom:1px solid var(--bg3)}
+.camera-grid{display:grid;height:calc(100vh - var(--topbar) - 44px);gap:4px;padding:4px;background:var(--bg)}
+.camera-cell{position:relative;background:var(--bg2);border-radius:8px;overflow:hidden;cursor:pointer}
+.camera-cell img{width:100%;height:100%;object-fit:contain;display:block}
+.camera-cell .overlay{position:absolute;top:0;left:0;right:0;padding:8px 12px;background:linear-gradient(to bottom,rgba(0,0,0,.6),transparent);display:flex;align-items:center;gap:8px;z-index:2}
+.camera-cell .overlay .name{font-size:13px;font-weight:600}
+.camera-cell .det-badge{font-size:10px;padding:2px 6px;border-radius:3px;font-weight:600}
+.camera-cell .motion-indicator{position:absolute;top:8px;right:8px;width:12px;height:12px;border-radius:50%;background:var(--orange);display:none;z-index:2;animation:pulse 1s infinite}
+.camera-cell.motion-active .motion-indicator{display:block}
+.camera-cell .cell-controls{position:absolute;bottom:8px;right:8px;display:flex;gap:6px;opacity:0;transition:.2s;z-index:2}
+.camera-cell:hover .cell-controls{opacity:1}
+.cell-btn{width:32px;height:32px;border-radius:6px;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;font-size:16px}
+.cell-btn:hover{background:rgba(0,0,0,.8)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Fullscreen */
+.fullscreen-overlay{position:fixed;inset:0;background:var(--bg);z-index:1000;display:none;flex-direction:column}
+.fullscreen-overlay.active{display:flex}
+.fullscreen-header{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--bg3);flex-wrap:wrap}
+.fullscreen-header h3{flex:1;font-size:16px}
+.fullscreen-body{flex:1;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.fullscreen-body img{max-width:100%;max-height:100%;object-fit:contain}
+
+/* PTZ */
+.ptz-panel{position:absolute;bottom:20px;right:20px;display:none}
+.ptz-panel.visible{display:block}
+.ptz-dpad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,44px);gap:4px}
+.ptz-dpad button{border-radius:8px;background:rgba(255,255,255,.1);font-size:18px;display:flex;align-items:center;justify-content:center}
+.ptz-dpad button:hover{background:rgba(255,255,255,.25)}
+.ptz-dpad .center{background:var(--blue)}
+.ptz-zoom{display:flex;gap:8px;margin-top:8px;justify-content:center}
+.ptz-zoom button{width:44px;height:36px;border-radius:8px;background:rgba(255,255,255,.1);font-size:18px;display:flex;align-items:center;justify-content:center}
+.ptz-zoom button:hover{background:rgba(255,255,255,.25)}
+
+/* Detection Settings Panel */
+.det-panel{position:absolute;bottom:20px;left:20px;background:rgba(0,0,0,.9);border-radius:12px;padding:20px;display:none;min-width:280px;max-height:80vh;overflow-y:auto}
+.det-panel.visible{display:block}
+.det-panel h4{margin-bottom:12px;font-size:14px}
+.det-level{display:flex;flex-direction:column;gap:6px}
+.det-level label{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px;transition:.15s}
+.det-level label:hover{background:rgba(255,255,255,.08)}
+.det-level label.active{background:rgba(59,130,246,.2);border:1px solid rgba(59,130,246,.4)}
+.det-level label input{display:none}
+.det-level .level-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.det-level .level-name{flex:1}
+.det-level .level-desc{font-size:11px;color:var(--text3)}
+.hw-info{margin-top:12px;padding-top:12px;border-top:1px solid var(--bg3);font-size:12px;color:var(--text2)}
+.hw-info .hw-row{display:flex;justify-content:space-between;margin-bottom:4px}
+.storage-info{margin-top:12px;padding-top:12px;border-top:1px solid var(--bg3);font-size:12px}
+.storage-bar{height:6px;background:var(--bg3);border-radius:3px;margin-top:4px}
+.storage-bar .fill{height:100%;border-radius:3px;background:var(--blue);transition:width .3s}
+
+/* GPIO Panel */
+.gpio-section{margin-top:16px;padding-top:16px;border-top:1px solid var(--bg3)}
+.gpio-section h4{margin-bottom:10px;font-size:14px;display:flex;align-items:center;gap:8px}
+.gpio-inputs,.gpio-outputs{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.gpio-row{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:6px;background:rgba(255,255,255,.04);font-size:13px}
+.gpio-row .gpio-name{flex:1}
+.gpio-row .gpio-state{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.gpio-row .gpio-state.on{background:var(--green)}
+.gpio-row .gpio-state.off{background:var(--text3)}
+.gpio-toggle{position:relative;width:40px;height:22px;flex-shrink:0}
+.gpio-toggle input{opacity:0;width:0;height:0}
+.gpio-toggle .gt-slider{position:absolute;inset:0;background:var(--bg3);border-radius:11px;transition:.2s;cursor:pointer}
+.gpio-toggle .gt-slider::before{content:'';position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;left:2px;top:2px;transition:.2s}
+.gpio-toggle input:checked+.gt-slider{background:var(--green)}
+.gpio-toggle input:checked+.gt-slider::before{transform:translateX(18px)}
+
+/* Scenes */
+.scene-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:10px}
+.scene-btn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 10px;border-radius:10px;background:rgba(255,255,255,.06);transition:.2s;cursor:pointer;text-align:center}
+.scene-btn:hover{background:rgba(255,255,255,.12)}
+.scene-btn:active{transform:scale(.95)}
+.scene-btn.activated{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3)}
+.scene-icon{font-size:24px}
+.scene-label{font-size:12px;font-weight:600}
+.scene-desc{font-size:10px;color:var(--text3)}
+
+/* Dashboard */
+.dashboard{padding:24px;overflow-y:auto;height:calc(100vh - var(--topbar))}
+.dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:24px}
+.dash-card{background:var(--bg2);border-radius:12px;padding:20px}
+.dash-card h4{font-size:13px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.dash-card .value{font-size:28px;font-weight:700}
+.dash-card .sub{font-size:13px;color:var(--text2);margin-top:4px}
+.dash-section{margin-bottom:24px}
+.dash-section h3{font-size:16px;margin-bottom:12px}
+.cam-health-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
+.health-card{background:var(--bg2);border-radius:10px;padding:16px}
+.health-card .health-top{display:flex;gap:12px;align-items:center;margin-bottom:10px}
+.health-card .health-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.health-card .health-info h4{font-size:15px;margin-bottom:2px}
+.health-card .health-stats{display:flex;gap:12px;font-size:12px;color:var(--text2);flex-wrap:wrap}
+.health-bar{height:4px;background:var(--bg3);border-radius:2px;margin-top:6px}
+.health-bar .fill{height:100%;border-radius:2px;transition:width .3s}
+.det-badge-lg{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.storage-card{margin-top:8px;padding:8px 12px;background:var(--bg);border-radius:6px;font-size:12px}
+
+/* GPIO Dashboard Section */
+.gpio-dash-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.gpio-dash-card{background:var(--bg2);border-radius:10px;padding:16px}
+.gpio-dash-card h4{font-size:15px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.gpio-dash-card h4 .client-dot{width:10px;height:10px;border-radius:50%;background:var(--green)}
+
+/* Timeline */
+.timeline-page{padding:24px;overflow-y:auto;height:calc(100vh - var(--topbar))}
+.timeline-controls{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.event-list{display:flex;flex-direction:column;gap:8px}
+.event-item{background:var(--bg2);border-radius:10px;padding:14px 16px;display:flex;gap:16px;align-items:center;cursor:pointer;transition:.15s}
+.event-item:hover{background:var(--bg3)}
+.event-item .event-time{font-size:13px;color:var(--text2);white-space:nowrap;min-width:60px}
+.event-item .event-type{padding:3px 10px;border-radius:4px;font-size:12px;font-weight:600}
+.event-item .event-type.motion{background:rgba(249,115,22,.15);color:var(--orange)}
+.event-item .event-type.recording{background:rgba(239,68,68,.15);color:var(--red)}
+.event-item .event-type.manual{background:rgba(59,130,246,.15);color:var(--blue)}
+.event-item .event-type.ai{background:rgba(168,85,247,.15);color:var(--purple)}
+.event-item .event-type.gpio{background:rgba(6,182,212,.15);color:var(--cyan)}
+.event-item .event-type.scene{background:rgba(34,197,94,.15);color:var(--green)}
+.event-item .event-details{flex:1;font-size:14px}
+.event-item .event-thumb{width:80px;height:60px;border-radius:4px;object-fit:cover;background:var(--bg3)}
+
+/* Recording Playback */
+.playback-overlay{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:1500;display:none;flex-direction:column;align-items:center;justify-content:center}
+.playback-overlay.active{display:flex}
+.playback-header{display:flex;align-items:center;gap:12px;padding:16px;width:100%}
+.playback-header h3{flex:1}
+.playback-body{flex:1;display:flex;align-items:center;justify-content:center;max-width:90vw}
+.playback-body img{max-width:100%;max-height:80vh;object-fit:contain;border-radius:8px}
+.playback-controls{padding:16px;display:flex;gap:12px;align-items:center}
+.playback-slider{flex:1;height:6px;-webkit-appearance:none;background:var(--bg3);border-radius:3px;outline:none}
+.playback-slider::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--blue);cursor:pointer}
+
+/* Admin */
+.admin-page{padding:24px;overflow-y:auto;height:calc(100vh - var(--topbar))}
+.user-table{width:100%;border-collapse:collapse;background:var(--bg2);border-radius:10px;overflow:hidden}
+.user-table th,.user-table td{padding:12px 16px;text-align:left;font-size:14px}
+.user-table th{background:var(--bg3);font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)}
+.user-table tr:not(:last-child) td{border-bottom:1px solid var(--bg3)}
+.role-badge{padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600}
+.role-badge.admin{background:rgba(239,68,68,.15);color:var(--red)}
+.role-badge.user{background:rgba(59,130,246,.15);color:var(--blue)}
+.role-badge.guest{background:rgba(148,163,184,.15);color:var(--text2)}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:none;align-items:center;justify-content:center}
+.modal-backdrop.active{display:flex}
+.modal{background:var(--bg2);border-radius:16px;padding:24px;width:420px;max-width:90vw;max-height:90vh;overflow-y:auto}
+.modal h3{margin-bottom:16px}
+.modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+
+/* Notification settings */
+.notif-section{margin-top:16px}
+.notif-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px}
+.notif-row .notif-label{flex:1}
+
+/* Toast notifications */
+.toast-container{position:fixed;top:70px;right:16px;z-index:3000;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:10px;font-size:14px;font-weight:500;animation:toastIn .3s ease;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.toast.gpio{background:rgba(6,182,212,.9);color:#fff}
+.toast.scene{background:rgba(34,197,94,.9);color:#fff}
+.toast.motion{background:rgba(249,115,22,.9);color:#fff}
+.toast.error{background:rgba(239,68,68,.9);color:#fff}
+@keyframes toastIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+
+/* Responsive */
+@media(max-width:768px){
+  .sidebar{position:fixed;left:-280px;top:var(--topbar);bottom:0;z-index:200;transition:.3s}
+  .sidebar.open{left:0}
+  .sidebar-toggle{display:block !important}
+  .topbar-nav button{padding:6px 10px;font-size:12px}
+  .dashboard,.timeline-page,.admin-page{padding:16px}
+  .det-panel{left:8px;right:8px;min-width:auto}
+  .scene-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(min-width:769px){.sidebar-toggle{display:none !important}}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="logo">&#x1F4F7;</div>
+    <h1>Pi Camera Stream</h1>
+    <p>Logga in for att se dina kameror</p>
+    <div id="jwt-login">
+      <div class="form-group">
+        <label>Anvandarnamn</label>
+        <input type="text" id="login-user" placeholder="admin">
+      </div>
+      <div class="form-group">
+        <label>Losenord</label>
+        <input type="password" id="login-pass" placeholder="Losenord">
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="doLogin()">Logga in</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+  <div class="topbar">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" style="font-size:20px">&#9776;</button>
+    <div class="logo-sm">&#x1F4F7; <span>CamStream</span></div>
+    <div class="topbar-nav">
+      <button class="active" data-page="live" onclick="showPage('live')">Live</button>
+      <button data-page="dashboard" onclick="showPage('dashboard')">Dashboard</button>
+      <button data-page="gpio" onclick="showPage('gpio')">GPIO/Scener</button>
+      <button data-page="timeline" onclick="showPage('timeline')">Tidslinje</button>
+      <button data-page="recordings" onclick="showPage('recordings')">Inspelningar</button>
+      <button data-page="admin" onclick="showPage('admin')" id="admin-tab" style="display:none">Admin</button>
+    </div>
+    <div class="topbar-right">
+      <div class="user-info"><strong id="user-display"></strong> <span id="user-role" class="role-badge" style="margin-left:4px"></span></div>
+      <button class="btn btn-sm" style="background:var(--bg3)" id="logout-btn" onclick="doLogout()">Logga ut</button>
+    </div>
+  </div>
+  <div class="main-area">
+    <div class="sidebar" id="sidebar">
+      <h3>Kameror (<span id="cam-count">0</span>)</h3>
+      <div class="cam-list" id="cam-list"></div>
+      <div id="secret-info" style="display:none;padding:8px 16px">
+        <div class="secret-box">
+          <strong>Kamerahemlighet:</strong><br>
+          <code id="camera-secret-display">...</code>
+          <p style="margin-top:8px;font-size:11px;color:var(--text3)">Anvand denna nyckel i Pi-klientens cameras.yaml</p>
+        </div>
+      </div>
+    </div>
+    <div class="content">
+      <!-- LIVE -->
+      <div id="page-live">
+        <div class="grid-controls">
+          <label>Layout:</label>
+          <select id="grid-layout" onchange="updateGrid()">
+            <option value="auto">Auto</option>
+            <option value="1">1x1</option>
+            <option value="2">2x2</option>
+            <option value="3">3x2</option>
+            <option value="4">3x3</option>
+            <option value="5">4x4</option>
+          </select>
+          <span style="margin-left:auto;font-size:13px" id="ws-status">&#x25CF; Ansluter...</span>
+        </div>
+        <div class="camera-grid" id="camera-grid"></div>
+      </div>
+      <!-- DASHBOARD -->
+      <div id="page-dashboard" style="display:none">
+        <div class="dashboard" id="dashboard-content"><p style="color:var(--text3);padding:24px">Laddar dashboard...</p></div>
+      </div>
+      <!-- GPIO / SCENES -->
+      <div id="page-gpio" style="display:none">
+        <div class="dashboard" id="gpio-page-content">
+          <h2 style="margin-bottom:8px">GPIO &amp; Scener</h2>
+          <p style="color:var(--text2);font-size:14px;margin-bottom:24px">Styr utgongar, se sensorstatus och aktivera scener pa dina Pi-klienter.</p>
+          <div id="gpio-clients-container"><p style="color:var(--text3)">Inga klienter med GPIO anslutna.</p></div>
+        </div>
+      </div>
+      <!-- TIMELINE -->
+      <div id="page-timeline" style="display:none">
+        <div class="timeline-page">
+          <h2 style="margin-bottom:16px">Tidslinje</h2>
+          <div class="timeline-controls">
+            <select id="timeline-camera"></select>
+            <input type="date" id="timeline-date">
+            <select id="timeline-filter">
+              <option value="all">Alla handelser</option>
+              <option value="motion">Rorelse</option>
+              <option value="gpio">GPIO</option>
+              <option value="scene">Scener</option>
+              <option value="recording">Inspelningar</option>
+            </select>
+            <button class="btn btn-sm btn-primary" onclick="loadTimeline()">Visa</button>
+          </div>
+          <div class="event-list" id="event-list"><p style="color:var(--text3)">Valj en kamera och datum.</p></div>
+        </div>
+      </div>
+      <!-- RECORDINGS -->
+      <div id="page-recordings" style="display:none">
+        <div class="timeline-page">
+          <h2 style="margin-bottom:16px">Inspelningar (lokal lagring)</h2>
+          <p style="color:var(--text2);font-size:14px;margin-bottom:16px">Inspelningar sparas lokalt pa Pi-klienterna. Valj en kamera for att hamta inspelningar on-demand.</p>
+          <div class="timeline-controls">
+            <select id="rec-camera"></select>
+            <input type="date" id="rec-date">
+            <button class="btn btn-sm btn-primary" onclick="loadRemoteRecordings()">Hamta</button>
+          </div>
+          <div class="event-list" id="rec-list"><p style="color:var(--text3)">Valj en kamera och datum.</p></div>
+        </div>
+      </div>
+      <!-- ADMIN -->
+      <div id="page-admin" style="display:none">
+        <div class="admin-page">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <h2>Anvandare</h2>
+            <button class="btn btn-sm btn-primary" onclick="showAddUserModal()">+ Ny anvandare</button>
+          </div>
+          <table class="user-table"><thead><tr><th>Anvandare</th><th>Roll</th><th>Kameror</th><th>Senast inloggad</th><th></th></tr></thead><tbody id="user-tbody"></tbody></table>
+
+          <h2 style="margin-top:32px;margin-bottom:12px">Notis-installningar per kamera</h2>
+          <div id="notif-settings-container"><p style="color:var(--text3)">Laddar...</p></div>
+
+          <h2 style="margin-top:32px">Audit-logg</h2>
+          <div id="audit-log" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- FULLSCREEN -->
+<div class="fullscreen-overlay" id="fullscreen-overlay">
+  <div class="fullscreen-header">
+    <h3 id="fs-cam-name"></h3>
+    <button class="btn btn-sm btn-purple" onclick="toggleDetPanel()">Detektering</button>
+    <button class="btn btn-sm btn-cyan" onclick="toggleGPIOPanel()">GPIO</button>
+    <button class="btn btn-sm" style="background:var(--bg3)" onclick="takeSnapshot()">Snapshot</button>
+    <button class="btn btn-sm" style="background:var(--bg3)" onclick="toggleRecording()">Spela in</button>
+    <button class="btn btn-sm btn-danger" onclick="closeFullscreen()">Stang</button>
+  </div>
+  <div class="fullscreen-body">
+    <img id="fs-img" alt="">
+    <!-- Detection Settings Panel -->
+    <div class="det-panel" id="fs-det-panel">
+      <h4>Detekteringsinstellningar</h4>
+      <div class="det-level" id="det-levels"></div>
+      <div class="hw-info" id="hw-info"></div>
+      <div class="storage-info" id="storage-info"></div>
+    </div>
+    <!-- GPIO Panel (fullscreen) -->
+    <div class="det-panel" id="fs-gpio-panel" style="right:20px;left:auto">
+      <h4>GPIO-styrning</h4>
+      <div id="fs-gpio-outputs"></div>
+      <div class="gpio-section" id="fs-gpio-inputs-section" style="border-top:none;margin-top:0">
+        <h4 style="font-size:13px;color:var(--text2)">Sensorer</h4>
+        <div id="fs-gpio-inputs"></div>
+      </div>
+      <div class="gpio-section" id="fs-scene-section">
+        <h4 style="font-size:13px;color:var(--text2)">Scener</h4>
+        <div class="scene-grid" id="fs-scenes"></div>
+      </div>
+    </div>
+    <!-- PTZ Panel -->
+    <div class="ptz-panel" id="fs-ptz">
+      <div class="ptz-dpad">
+        <div></div><button onclick="sendPTZ('move',{tilt:10})">&#x25B2;</button><div></div>
+        <button onclick="sendPTZ('move',{pan:-10})">&#x25C0;</button>
+        <button class="center" onclick="sendPTZ('home')">&#x25C9;</button>
+        <button onclick="sendPTZ('move',{pan:10})">&#x25B6;</button>
+        <div></div><button onclick="sendPTZ('move',{tilt:-10})">&#x25BC;</button><div></div>
+      </div>
+      <div class="ptz-zoom">
+        <button onclick="sendPTZ('zoom',{direction:'out'})">&#x2212;</button>
+        <button onclick="sendPTZ('zoom',{direction:'in'})">+</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RECORDING PLAYBACK -->
+<div class="playback-overlay" id="playback-overlay">
+  <div class="playback-header">
+    <h3 id="pb-title">Inspelning</h3>
+    <button class="btn btn-sm btn-danger" onclick="closePlayback()">Stang</button>
+  </div>
+  <div class="playback-body">
+    <img id="pb-img" alt="">
+  </div>
+  <div class="playback-controls">
+    <button class="btn btn-sm" style="background:var(--bg3)" id="pb-play" onclick="togglePlayback()">&#x25B6;</button>
+    <input type="range" class="playback-slider" id="pb-slider" min="0" max="0" value="0" oninput="seekPlayback(this.value)">
+    <span id="pb-frame-info" style="font-size:13px;color:var(--text2)">0/0</span>
+  </div>
+</div>
+
+<!-- ADD USER MODAL -->
+<div class="modal-backdrop" id="user-modal">
+  <div class="modal">
+    <h3>Ny anvandare</h3>
+    <div class="form-group"><label>Anvandarnamn</label><input type="text" id="modal-username"></div>
+    <div class="form-group"><label>Losenord</label><input type="password" id="modal-password"></div>
+    <div class="form-group"><label>Roll</label><select id="modal-role"><option value="user">User</option><option value="admin">Admin</option><option value="guest">Guest</option></select></div>
+    <div class="form-group"><label>Tillatna kameror (* = alla)</label><input type="text" id="modal-cameras" value="*"></div>
+    <div class="modal-actions">
+      <button class="btn btn-sm" style="background:var(--bg3)" onclick="closeModal()">Avbryt</button>
+      <button class="btn btn-sm btn-primary" onclick="saveUser()">Spara</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===================================================================
+// STATE
+// ===================================================================
+let ws=null, token=null, user=null, httpBase='', wsUrl='';
+let isHAIngress=false, ingressPath='';
+let cameras=new Map(), subscribedCameras=new Set(), cameraImages=new Map(), cameraMotion=new Map();
+let fullscreenCameraId=null;
+let playbackFrames=[], playbackIndex=0, playbackTimer=null, playbackPlaying=false;
+let gpioStates = new Map(); // cameraId -> { inputs: [...], outputs: [...], scenes: [...] }
+
+const DETECTION_LEVELS = [
+  { level: 0, name: 'Av', desc: 'Ingen detektering, bara streaming', color: 'var(--text3)' },
+  { level: 1, name: 'Enkel rorelse', desc: 'Grundlaggande rorelsedetektering, lag CPU', color: 'var(--green)' },
+  { level: 2, name: 'Avancerad rorelse', desc: 'Rorelsedetektering med zoner och kanslighet', color: 'var(--blue)' },
+  { level: 3, name: 'AI Lite', desc: 'MobileNet SSD, detekterar personer/bilar', color: 'var(--orange)' },
+  { level: 4, name: 'AI Standard', desc: 'YOLOv8n, fler objekttyper', color: 'var(--red)' },
+  { level: 5, name: 'AI Full', desc: 'YOLOv8s med Coral/GPU acceleration', color: 'var(--purple)' },
+];
+
+const SCENE_ICONS = {
+  'snowflake': '&#x2744;', 'home': '&#x1F3E0;', 'lock': '&#x1F512;',
+  'shield': '&#x1F6E1;', 'shield-off': '&#x1F513;', 'sun': '&#x2600;',
+  'moon': '&#x1F319;', 'bulb': '&#x1F4A1;', 'fire': '&#x1F525;',
+  'bell': '&#x1F514;', 'camera': '&#x1F4F7;', 'power': '&#x26A1;',
+};
+
+// ===================================================================
+// DETECT HA INGRESS MODE
+// ===================================================================
+(function detectMode(){
+  const loc = window.location;
+  const pathMatch = loc.pathname.match(/^(\/api\/hassio_ingress\/[^/]+)/);
+  if (pathMatch) { isHAIngress = true; ingressPath = pathMatch[1]; }
+  if (isHAIngress) {
+    httpBase = `${loc.protocol}//${loc.host}${ingressPath}`;
+    wsUrl = `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}${ingressPath}`;
+  } else {
+    httpBase = `${loc.protocol}//${loc.host}`;
+    wsUrl = `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}`;
+  }
+})();
+
+// ===================================================================
+// AUTO-LOGIN
+// ===================================================================
+(async function init(){
+  if (isHAIngress) {
+    document.getElementById('login-screen').style.display = 'none';
+    user = { username: 'ha_user', role: 'admin', displayName: 'Home Assistant' };
+    token = null;
+    connectWS();
+  } else {
+    document.getElementById('login-screen').style.display = 'flex';
+  }
+})();
+
+// ===================================================================
+// LOGIN
+// ===================================================================
+async function doLogin(){
+  const err = document.getElementById('login-error');
+  err.style.display = 'none';
+  const u = document.getElementById('login-user').value;
+  const p = document.getElementById('login-pass').value;
+  if (!u || !p) { err.textContent = 'Ange anvandarnamn och losenord'; err.style.display = 'block'; return; }
+  try {
+    const r = await fetch(`${httpBase}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Inloggning misslyckades'; err.style.display = 'block'; return; }
+    token = d.token; user = d.user;
+    connectWS();
+  } catch (e) { err.textContent = 'Kunde inte ansluta till servern'; err.style.display = 'block'; }
+}
+function doLogout(){
+  if (ws) ws.close(); token = null; user = null;
+  cameras.clear(); subscribedCameras.clear(); gpioStates.clear();
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+// ===================================================================
+// WEBSOCKET
+// ===================================================================
+let reconnectTimer = null;
+function connectWS(){
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  ws = new WebSocket(wsUrl);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    const reg = { type: 'register_viewer' };
+    if (isHAIngress) reg.ha_ingress = true;
+    else if (token) reg.token = token;
+    ws.send(JSON.stringify(reg));
+  };
+  ws.onmessage = (e) => {
+    if (e.data instanceof ArrayBuffer) handleFrame(e.data);
+    else handleMsg(JSON.parse(e.data));
+  };
+  ws.onclose = () => { setStatus('offline'); reconnectTimer = setTimeout(() => connectWS(), 3000); };
+  ws.onerror = () => {};
+}
+
+function setStatus(s){
+  const el = document.getElementById('ws-status');
+  if (s === 'online') { el.innerHTML = '<span style="color:var(--green)">&#x25CF;</span> Ansluten'; el.style.color = 'var(--green)'; }
+  else { el.innerHTML = '<span style="color:var(--red)">&#x25CF;</span> Frankopplad'; el.style.color = 'var(--red)'; }
+}
+
+function handleMsg(m){
+  switch(m.type){
+    case 'connected': showApp(m); break;
+    case 'camera_list': case 'camera_list_updated': updateCamList(m.cameras || []); break;
+    case 'subscribed': subscribedCameras.add(m.camera_id); refreshUI(); break;
+    case 'unsubscribed': subscribedCameras.delete(m.camera_id); cameraImages.delete(m.camera_id); refreshUI(); break;
+    case 'camera_disconnected': subscribedCameras.delete(m.camera_id); cameraImages.delete(m.camera_id); cameras.delete(m.camera_id); refreshUI(); break;
+    case 'motion_event': onMotion(m); break;
+    case 'detection_level_update': onDetLevelUpdate(m); break;
+    case 'remote_recordings': onRemoteRecordings(m); break;
+    case 'remote_clip': onRemoteClip(m); break;
+    case 'remote_thumbnail': onRemoteThumbnail(m); break;
+    case 'remote_storage_stats': onRemoteStorageStats(m); break;
+    case 'gpio_event': onGPIOEvent(m); break;
+    case 'scene_activated': onSceneActivated(m); break;
+    case 'gpio_states_response': onGPIOStatesResponse(m); break;
+    case 'gpio_output_set': onGPIOOutputSet(m); break;
+    case 'notification_settings': onNotificationSettings(m); break;
+    case 'error': showToast(m.message || 'Fel', 'error'); break;
+  }
+}
+
+function handleFrame(data){
+  const v = new DataView(data), idLen = v.getUint32(0);
+  const id = new TextDecoder().decode(new Uint8Array(data, 4, idLen));
+  const jpeg = new Uint8Array(data, 4 + idLen);
+  const blob = new Blob([jpeg], { type: 'image/jpeg' }), url = URL.createObjectURL(blob);
+  const img = cameraImages.get(id);
+  if (img) { const old = img.src; img.src = url; if (old && old.startsWith('blob:')) URL.revokeObjectURL(old); }
+  if (fullscreenCameraId === id) {
+    const fi = document.getElementById('fs-img');
+    const old = fi.src; fi.src = url;
+    if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+  }
+}
+
+// ===================================================================
+// TOAST NOTIFICATIONS
+// ===================================================================
+function showToast(text, type='gpio', duration=4000){
+  const c = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = text;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
+// ===================================================================
+// APP INIT
+// ===================================================================
+function showApp(m){
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  setStatus('online');
+  if (user) {
+    document.getElementById('user-display').textContent = user.displayName || user.username;
+    const r = document.getElementById('user-role');
+    r.textContent = user.role; r.className = 'role-badge ' + user.role;
+  }
+  if (user && user.role === 'admin') {
+    document.getElementById('admin-tab').style.display = '';
+    loadCameraSecret();
+  }
+  if (isHAIngress) document.getElementById('logout-btn').style.display = 'none';
+  updateCamList(m.available_cameras || []);
+  // Request GPIO states for all cameras
+  setTimeout(requestAllGPIOStates, 2000);
+}
+
+async function loadCameraSecret(){
+  try {
+    const headers = {}; if (token) headers['Authorization'] = `Bearer ${token}`;
+    const r = await fetch(`${httpBase}/api/camera-secret`, { headers });
+    const d = await r.json();
+    if (d.secret) { document.getElementById('camera-secret-display').textContent = d.secret; document.getElementById('secret-info').style.display = ''; }
+  } catch(e) {}
+}
+
+// ===================================================================
+// CAMERA LIST & GRID
+// ===================================================================
+function updateCamList(list){
+  cameras.clear();
+  list.forEach(c => cameras.set(c.id, c));
+  document.getElementById('cam-count').textContent = cameras.size;
+  refreshUI();
+}
+
+function refreshUI(){
+  const el = document.getElementById('cam-list');
+  el.innerHTML = '';
+  cameras.forEach((c, id) => {
+    const on = subscribedCameras.has(id);
+    const dl = c.detectionLevel || 0;
+    const dlInfo = DETECTION_LEVELS[dl] || DETECTION_LEVELS[0];
+    const hasGPIO = c.gpioEnabled || (gpioStates.has(id) && gpioStates.get(id).outputs?.length > 0);
+    const d = document.createElement('div');
+    d.className = 'cam-item' + (on ? ' active' : '');
+    d.innerHTML = `<div class="cam-dot online"></div><div class="cam-info"><div class="cam-name">${esc(c.name)}</div><div class="cam-meta">${esc(c.resolution||'')} &middot; L${dl} ${esc(dlInfo.name)}${hasGPIO ? ' &middot; GPIO' : ''}${c.localRecording ? ' &middot; Insp.' : ''}</div></div><label class="cam-toggle"><input type="checkbox" ${on?'checked':''} onchange="toggleCam('${id}',this.checked)"><span class="slider"></span></label>`;
+    el.appendChild(d);
+  });
+  ['timeline-camera','rec-camera'].forEach(selId => {
+    const sel = document.getElementById(selId);
+    sel.innerHTML = '';
+    cameras.forEach((c, id) => { sel.innerHTML += `<option value="${id}">${esc(c.name)}</option>`; });
+  });
+  updateGrid();
+}
+
+function toggleCam(id, on){
+  if (on) ws.send(JSON.stringify({ type: 'subscribe', camera_id: id }));
+  else { ws.send(JSON.stringify({ type: 'unsubscribe', camera_id: id })); subscribedCameras.delete(id); cameraImages.delete(id); updateGrid(); }
+}
+
+function onMotion(m){
+  const cell = document.querySelector(`.camera-cell[data-id="${m.camera_id}"]`);
+  if (cell) {
+    if (m.event === 'start') { cell.classList.add('motion-active'); cameraMotion.set(m.camera_id, true); showToast(`Rorelse: ${cameras.get(m.camera_id)?.name || m.camera_id}`, 'motion'); }
+    else { cell.classList.remove('motion-active'); cameraMotion.set(m.camera_id, false); }
+  }
+}
+
+function onDetLevelUpdate(m){
+  const cam = cameras.get(m.camera_id);
+  if (cam) { cam.detectionLevel = m.level; refreshUI(); }
+  if (fullscreenCameraId === m.camera_id) renderDetPanel(m.camera_id);
+}
+
+function updateGrid(){
+  const grid = document.getElementById('camera-grid');
+  grid.innerHTML = '';
+  const active = Array.from(subscribedCameras);
+  if (!active.length) {
+    grid.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:16px;grid-column:1/-1">Aktivera kameror i sidopanelen</div>';
+    return;
+  }
+  const layout = document.getElementById('grid-layout').value;
+  let cols;
+  if (layout === 'auto') cols = Math.ceil(Math.sqrt(active.length));
+  else cols = [1,2,3,3,4][parseInt(layout)-1] || 2;
+  const rows = Math.ceil(active.length / cols);
+  grid.style.gridTemplateColumns = `repeat(${cols},1fr)`;
+  grid.style.gridTemplateRows = `repeat(${rows},1fr)`;
+  active.forEach(id => {
+    const cam = cameras.get(id);
+    const dl = cam?.detectionLevel || 0;
+    const dlInfo = DETECTION_LEVELS[dl] || DETECTION_LEVELS[0];
+    const cell = document.createElement('div');
+    cell.className = 'camera-cell' + (cameraMotion.get(id) ? ' motion-active' : '');
+    cell.dataset.id = id;
+    const img = document.createElement('img');
+    img.alt = cam?.name || id;
+    cameraImages.set(id, img);
+    cell.innerHTML = `<div class="overlay"><span class="name">${esc(cam?.name||id)}</span><span class="det-badge" style="background:${dlInfo.color}20;color:${dlInfo.color}">L${dl}</span></div><div class="motion-indicator"></div><div class="cell-controls"><button class="cell-btn" onclick="openFS('${id}')" title="Fullskarm">&#x26F6;</button><button class="cell-btn" onclick="snapCam('${id}')" title="Snapshot">&#x1F4F8;</button></div>`;
+    cell.insertBefore(img, cell.children[1]);
+    cell.addEventListener('dblclick', () => openFS(id));
+    grid.appendChild(cell);
+  });
+}
+
+// ===================================================================
+// FULLSCREEN, PTZ, DETECTION & GPIO
+// ===================================================================
+function openFS(id){
+  fullscreenCameraId = id;
+  const cam = cameras.get(id);
+  document.getElementById('fs-cam-name').textContent = cam?.name || id;
+  document.getElementById('fullscreen-overlay').classList.add('active');
+  document.getElementById('fs-ptz').classList.toggle('visible', !!(cam?.capabilities?.ptz));
+  document.getElementById('fs-det-panel').classList.remove('visible');
+  document.getElementById('fs-gpio-panel').classList.remove('visible');
+  renderDetPanel(id);
+  renderFSGPIOPanel(id);
+  // Request GPIO states
+  ws.send(JSON.stringify({ type: 'get_gpio_states', camera_id: id, request_id: 'fsgpio_' + Date.now() }));
+}
+function closeFullscreen(){ fullscreenCameraId = null; document.getElementById('fullscreen-overlay').classList.remove('active'); }
+function sendPTZ(action, params){ if (!fullscreenCameraId) return; ws.send(JSON.stringify({ type: 'ptz', camera_id: fullscreenCameraId, action, params: params||{} })); }
+function takeSnapshot(){ const img = document.getElementById('fs-img'); if (!img.src) return; const a = document.createElement('a'); a.href = img.src; a.download = `snap_${fullscreenCameraId}_${Date.now()}.jpg`; a.click(); }
+function snapCam(id){ const img = cameraImages.get(id); if (!img?.src) return; const a = document.createElement('a'); a.href = img.src; a.download = `snap_${id}_${Date.now()}.jpg`; a.click(); }
+function toggleRecording(){ if (!fullscreenCameraId) return; ws.send(JSON.stringify({ type: 'start_recording', camera_id: fullscreenCameraId })); }
+
+function toggleDetPanel(){
+  const panel = document.getElementById('fs-det-panel');
+  document.getElementById('fs-gpio-panel').classList.remove('visible');
+  panel.classList.toggle('visible');
+  if (panel.classList.contains('visible') && fullscreenCameraId) {
+    renderDetPanel(fullscreenCameraId);
+    ws.send(JSON.stringify({ type: 'get_storage_stats', camera_id: fullscreenCameraId, request_id: 'det_' + Date.now() }));
+  }
+}
+
+function toggleGPIOPanel(){
+  const panel = document.getElementById('fs-gpio-panel');
+  document.getElementById('fs-det-panel').classList.remove('visible');
+  panel.classList.toggle('visible');
+  if (panel.classList.contains('visible') && fullscreenCameraId) {
+    ws.send(JSON.stringify({ type: 'get_gpio_states', camera_id: fullscreenCameraId, request_id: 'fsgpio_' + Date.now() }));
+  }
+}
+
+function renderDetPanel(camId){
+  const cam = cameras.get(camId);
+  if (!cam) return;
+  const currentLevel = cam.detectionLevel || 0;
+  const hw = cam.hardwareSummary || {};
+  const el = document.getElementById('det-levels');
+  el.innerHTML = DETECTION_LEVELS.map(dl => {
+    const isActive = dl.level === currentLevel;
+    const isRec = hw.recommended_level === dl.level;
+    return `<label class="${isActive ? 'active' : ''}" onclick="setDetLevel('${camId}', ${dl.level})">
+      <input type="radio" name="det-level" value="${dl.level}" ${isActive ? 'checked' : ''}>
+      <span class="level-dot" style="background:${dl.color}"></span>
+      <span class="level-name">${dl.name}${isRec ? ' (rekommenderad)' : ''}</span>
+      <span class="level-desc">${dl.desc}</span>
+    </label>`;
+  }).join('');
+  const hwEl = document.getElementById('hw-info');
+  if (hw && Object.keys(hw).length > 0) {
+    hwEl.innerHTML = `<strong>Hardvara</strong>
+      <div class="hw-row"><span>Plattform</span><span>${esc(hw.platform || 'Okand')}</span></div>
+      <div class="hw-row"><span>CPU</span><span>${esc(hw.cpu_model || 'Okand')}</span></div>
+      <div class="hw-row"><span>Karnor</span><span>${hw.cpu_cores || '?'}</span></div>
+      <div class="hw-row"><span>RAM</span><span>${hw.total_ram_mb ? Math.round(hw.total_ram_mb/1024*10)/10 + ' GB' : '?'}</span></div>
+      <div class="hw-row"><span>GPU/NPU</span><span>${hw.has_gpu ? 'Ja' : hw.has_coral ? 'Coral TPU' : 'Nej'}</span></div>
+      <div class="hw-row"><span>Rekommenderad</span><span style="color:${DETECTION_LEVELS[hw.recommended_level||0]?.color || 'var(--text)'}">L${hw.recommended_level||0} ${DETECTION_LEVELS[hw.recommended_level||0]?.name || ''}</span></div>`;
+  } else {
+    hwEl.innerHTML = '<em style="color:var(--text3)">Ingen hardvaruinfo tillganglig</em>';
+  }
+}
+
+function setDetLevel(camId, level){
+  ws.send(JSON.stringify({ type: 'set_detection_level', camera_id: camId, level: level }));
+  const cam = cameras.get(camId);
+  if (cam) cam.detectionLevel = level;
+  renderDetPanel(camId);
+  refreshUI();
+}
+
+function onRemoteStorageStats(m){
+  const el = document.getElementById('storage-info');
+  if (!el) return;
+  const s = m.stats || {};
+  const usedPct = s.max_storage_mb ? Math.round(s.used_mb / s.max_storage_mb * 100) : 0;
+  const barColor = usedPct > 80 ? 'var(--red)' : usedPct > 60 ? 'var(--orange)' : 'var(--blue)';
+  el.innerHTML = `<strong>Lokal lagring</strong>
+    <div class="hw-row"><span>Anvant</span><span>${s.used_mb || 0} MB / ${s.max_storage_mb || '?'} MB</span></div>
+    <div class="hw-row"><span>Inspelningar</span><span>${s.total_clips || 0} klipp</span></div>
+    <div class="hw-row"><span>Disk ledigt</span><span>${s.disk_free_gb || '?'} GB</span></div>
+    <div class="storage-bar"><div class="fill" style="width:${usedPct}%;background:${barColor}"></div></div>`;
+}
+
+// ===================================================================
+// GPIO HANDLING
+// ===================================================================
+function onGPIOEvent(m){
+  showToast(`GPIO: ${m.pin_name} ${m.state ? 'AKTIV' : 'INAKTIV'} (${cameras.get(m.camera_id)?.name || m.camera_id})`, 'gpio');
+  // Update local state
+  const gs = gpioStates.get(m.camera_id);
+  if (gs) {
+    const input = gs.inputs?.find(i => i.name === m.pin_name);
+    if (input) input.state = m.state;
+    const output = gs.outputs?.find(o => o.name === m.pin_name);
+    if (output) output.state = m.state;
+  }
+  if (fullscreenCameraId === m.camera_id) renderFSGPIOPanel(m.camera_id);
+  renderGPIOPage();
+}
+
+function onSceneActivated(m){
+  showToast(`Scen: ${m.scene_label || m.scene_name} aktiverad (${cameras.get(m.camera_id)?.name || m.camera_id})`, 'scene');
+  if (fullscreenCameraId === m.camera_id) {
+    // Request updated GPIO states
+    ws.send(JSON.stringify({ type: 'get_gpio_states', camera_id: m.camera_id, request_id: 'scene_' + Date.now() }));
+  }
+}
+
+function onGPIOStatesResponse(m){
+  gpioStates.set(m.camera_id, m.states || {});
+  if (fullscreenCameraId === m.camera_id) renderFSGPIOPanel(m.camera_id);
+  renderGPIOPage();
+}
+
+function onGPIOOutputSet(m){
+  const gs = gpioStates.get(m.camera_id);
+  if (gs) {
+    const output = gs.outputs?.find(o => o.name === m.output_name);
+    if (output) output.state = m.state;
+  }
+  if (fullscreenCameraId === m.camera_id) renderFSGPIOPanel(m.camera_id);
+  renderGPIOPage();
+}
+
+function requestAllGPIOStates(){
+  cameras.forEach((c, id) => {
+    ws.send(JSON.stringify({ type: 'get_gpio_states', camera_id: id, request_id: 'init_' + Date.now() }));
+  });
+}
+
+function setGPIOOutput(camId, outputName, state){
+  ws.send(JSON.stringify({ type: 'set_gpio_output', camera_id: camId, output_name: outputName, state: state }));
+}
+
+function activateScene(camId, sceneName){
+  ws.send(JSON.stringify({ type: 'activate_scene', camera_id: camId, scene_name: sceneName }));
+}
+
+function renderFSGPIOPanel(camId){
+  const gs = gpioStates.get(camId) || {};
+  const outputs = gs.outputs || [];
+  const inputs = gs.inputs || [];
+  const scenes = gs.scenes || [];
+
+  // Outputs
+  const outEl = document.getElementById('fs-gpio-outputs');
+  if (outputs.length) {
+    outEl.innerHTML = '<div class="gpio-outputs">' + outputs.map(o =>
+      `<div class="gpio-row">
+        <span class="gpio-name">${esc(o.name)}</span>
+        <label class="gpio-toggle">
+          <input type="checkbox" ${o.state ? 'checked' : ''} onchange="setGPIOOutput('${camId}','${esc(o.name)}',this.checked)">
+          <span class="gt-slider"></span>
+        </label>
+      </div>`
+    ).join('') + '</div>';
+  } else {
+    outEl.innerHTML = '<p style="font-size:12px;color:var(--text3)">Inga utgongar konfigurerade</p>';
+  }
+
+  // Inputs
+  const inEl = document.getElementById('fs-gpio-inputs');
+  if (inputs.length) {
+    inEl.innerHTML = inputs.map(i =>
+      `<div class="gpio-row">
+        <span class="gpio-state ${i.state ? 'on' : 'off'}"></span>
+        <span class="gpio-name">${esc(i.name)}</span>
+        <span style="font-size:11px;color:${i.state ? 'var(--green)' : 'var(--text3)'}">${i.state ? 'AKTIV' : 'Inaktiv'}</span>
+      </div>`
+    ).join('');
+    document.getElementById('fs-gpio-inputs-section').style.display = '';
+  } else {
+    document.getElementById('fs-gpio-inputs-section').style.display = 'none';
+  }
+
+  // Scenes
+  const scEl = document.getElementById('fs-scenes');
+  if (scenes.length) {
+    scEl.innerHTML = scenes.map(s =>
+      `<div class="scene-btn" onclick="activateScene('${camId}','${esc(s.name)}')">
+        <span class="scene-icon">${SCENE_ICONS[s.icon] || '&#x26A1;'}</span>
+        <span class="scene-label">${esc(s.label || s.name)}</span>
+        <span class="scene-desc">${esc(s.description || '')}</span>
+      </div>`
+    ).join('');
+    document.getElementById('fs-scene-section').style.display = '';
+  } else {
+    document.getElementById('fs-scene-section').style.display = 'none';
+  }
+}
+
+// ===================================================================
+// GPIO PAGE
+// ===================================================================
+function renderGPIOPage(){
+  const container = document.getElementById('gpio-clients-container');
+  let hasGPIO = false;
+  let html = '<div class="gpio-dash-grid">';
+
+  cameras.forEach((cam, camId) => {
+    const gs = gpioStates.get(camId) || {};
+    const outputs = gs.outputs || [];
+    const inputs = gs.inputs || [];
+    const scenes = gs.scenes || [];
+    if (!outputs.length && !inputs.length && !scenes.length) return;
+    hasGPIO = true;
+
+    html += `<div class="gpio-dash-card">
+      <h4><span class="client-dot"></span> ${esc(cam.name || camId)}</h4>`;
+
+    // Outputs
+    if (outputs.length) {
+      html += '<div style="margin-bottom:12px"><strong style="font-size:12px;color:var(--text2)">Utgongar</strong><div class="gpio-outputs" style="margin-top:6px">';
+      outputs.forEach(o => {
+        html += `<div class="gpio-row">
+          <span class="gpio-name">${esc(o.name)}</span>
+          <label class="gpio-toggle">
+            <input type="checkbox" ${o.state ? 'checked' : ''} onchange="setGPIOOutput('${camId}','${esc(o.name)}',this.checked)">
+            <span class="gt-slider"></span>
+          </label>
+        </div>`;
+      });
+      html += '</div></div>';
+    }
+
+    // Inputs
+    if (inputs.length) {
+      html += '<div style="margin-bottom:12px"><strong style="font-size:12px;color:var(--text2)">Sensorer</strong><div class="gpio-inputs" style="margin-top:6px">';
+      inputs.forEach(i => {
+        html += `<div class="gpio-row">
+          <span class="gpio-state ${i.state ? 'on' : 'off'}"></span>
+          <span class="gpio-name">${esc(i.name)}</span>
+          <span style="font-size:11px;color:${i.state ? 'var(--green)' : 'var(--text3)'}">${i.state ? 'AKTIV' : 'Inaktiv'}</span>
+        </div>`;
+      });
+      html += '</div></div>';
+    }
+
+    // Scenes
+    if (scenes.length) {
+      html += '<div><strong style="font-size:12px;color:var(--text2)">Scener</strong><div class="scene-grid" style="margin-top:6px">';
+      scenes.forEach(s => {
+        html += `<div class="scene-btn" onclick="activateScene('${camId}','${esc(s.name)}')">
+          <span class="scene-icon">${SCENE_ICONS[s.icon] || '&#x26A1;'}</span>
+          <span class="scene-label">${esc(s.label || s.name)}</span>
+        </div>`;
+      });
+      html += '</div></div>';
+    }
+
+    html += '</div>';
+  });
+
+  html += '</div>';
+  if (!hasGPIO) html = '<p style="color:var(--text3)">Inga klienter med GPIO anslutna. Konfigurera GPIO i cameras.yaml pa dina Pi-klienter.</p>';
+  container.innerHTML = html;
+}
+
+// ===================================================================
+// PAGES
+// ===================================================================
+function showPage(p){
+  document.querySelectorAll('.topbar-nav button').forEach(b => b.classList.toggle('active', b.dataset.page === p));
+  ['live','dashboard','gpio','timeline','recordings','admin'].forEach(x => { const el = document.getElementById('page-'+x); if(el) el.style.display = x === p ? '' : 'none'; });
+  if (p === 'dashboard') loadDashboard();
+  if (p === 'gpio') { requestAllGPIOStates(); renderGPIOPage(); }
+  if (p === 'admin') loadAdmin();
+}
+
+// ===================================================================
+// DASHBOARD
+// ===================================================================
+async function loadDashboard(){
+  const el = document.getElementById('dashboard-content');
+  try {
+    const h = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const r = await fetch(`${httpBase}/api/dashboard`, { headers: h });
+    const d = await r.json();
+    const up = fmtUp(d.server?.uptime || 0);
+    const mem = Math.round((d.server?.memoryUsage?.heapUsed || 0) / 1024 / 1024);
+    const mqttStatus = d.server?.mqttConnected ? '<span style="color:var(--green)">Ansluten</span>' : '<span style="color:var(--text3)">Ej aktiv</span>';
+    let gpioCount = 0;
+    gpioStates.forEach(gs => { gpioCount += (gs.outputs?.length || 0) + (gs.inputs?.length || 0); });
+
+    let html = `<div class="dash-grid">
+      <div class="dash-card"><h4>Kameror online</h4><div class="value">${d.server?.totalCameras||0}</div></div>
+      <div class="dash-card"><h4>Aktiva tittare</h4><div class="value">${d.server?.totalViewers||0}</div></div>
+      <div class="dash-card"><h4>Server uptime</h4><div class="value">${up}</div></div>
+      <div class="dash-card"><h4>Server minne</h4><div class="value">${mem} MB</div></div>
+      <div class="dash-card"><h4>MQTT</h4><div class="value" style="font-size:16px">${mqttStatus}</div></div>
+      <div class="dash-card"><h4>GPIO-punkter</h4><div class="value">${gpioCount}</div></div>
+    </div>`;
+
+    html += '<div class="dash-section"><h3>Kameror och detektering</h3><div class="cam-health-grid">';
+    (d.cameras || []).forEach(c => {
+      const h = c.health || {};
+      const dl = h.detectionLevel ?? c.detectionLevel ?? 0;
+      const dlInfo = DETECTION_LEVELS[dl] || DETECTION_LEVELS[0];
+      const storage = c.storageStats || h.storage || null;
+      const hwSummary = c.hardwareSummary || {};
+      const gs = gpioStates.get(c.id) || {};
+
+      html += `<div class="health-card">
+        <div class="health-top">
+          <div class="health-dot" style="background:${c.status==='online'?'var(--green)':'var(--red)'}"></div>
+          <div class="health-info">
+            <h4>${esc(c.name)}</h4>
+            <span class="det-badge-lg" style="background:${dlInfo.color}20;color:${dlInfo.color}">L${dl} ${esc(dlInfo.name)}</span>
+          </div>
+        </div>
+        <div class="health-stats">
+          <span>CPU: ${h.cpuUsage||0}%</span>
+          <span>Temp: ${h.cpuTemp||'?'}&deg;C</span>
+          <span>Disk: ${h.diskFree||'?'} GB</span>
+          <span>FPS: ${h.fps||0}</span>
+          <span>RAM: ${h.memoryUsage||0}%</span>
+          ${(gs.outputs?.length||0) > 0 ? `<span>GPIO: ${gs.outputs.length} utg.</span>` : ''}
+        </div>
+        ${hwSummary.platform ? `<div style="font-size:11px;color:var(--text3);margin-top:6px">${esc(hwSummary.platform||'')} &middot; ${esc(hwSummary.cpu_model||'')} &middot; ${hwSummary.cpu_cores||'?'} karnor</div>` : ''}
+        ${storage ? `<div class="storage-card"><strong>Lokal lagring:</strong> ${storage.used_mb||0} MB anvant, ${storage.total_clips||0} klipp</div>` : (c.localRecording ? '<div class="storage-card"><strong>Lokal lagring:</strong> Aktiv</div>' : '')}
+      </div>`;
+    });
+    html += '</div></div>';
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<p style="padding:24px;color:var(--text3)">Kunde inte ladda dashboard.</p>';
+  }
+}
+function fmtUp(s){ const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60); if(d>0)return d+'d '+h+'h'; if(h>0)return h+'h '+m+'m'; return m+'m'; }
+
+// ===================================================================
+// TIMELINE
+// ===================================================================
+async function loadTimeline(){
+  const cam = document.getElementById('timeline-camera').value;
+  const date = document.getElementById('timeline-date').value;
+  const filter = document.getElementById('timeline-filter').value;
+  if (!cam || !date) return;
+  const el = document.getElementById('event-list');
+  el.innerHTML = '<p style="color:var(--text3)">Laddar...</p>';
+  try {
+    const h = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const r = await fetch(`${httpBase}/api/timeline/${cam}/${date}`, { headers: h });
+    const d = await r.json();
+    let items = [];
+    (d.events||[]).forEach(e => items.push({ time: e.timestamp, type: e.event_type, details: JSON.parse(e.metadata||'{}'), src: 'event' }));
+    (d.recordings||[]).forEach(r => items.push({ time: r.start_time, type: 'recording', details: { frames: r.frame_count, size: r.file_size }, src: 'rec' }));
+    items.sort((a,b) => a.time.localeCompare(b.time));
+    if (filter !== 'all') items = items.filter(i => i.type === filter);
+    if (!items.length) { el.innerHTML = '<p style="color:var(--text3)">Inga handelser for detta datum.</p>'; return; }
+    el.innerHTML = items.map(i => {
+      const t = (i.time.split(' ')[1] || i.time.split('T')[1] || '').slice(0,8);
+      const tc = i.type === 'motion' ? 'motion' : i.type === 'recording' ? 'recording' : i.type === 'gpio' ? 'gpio' : i.type === 'scene' ? 'scene' : 'manual';
+      let det;
+      if (i.type === 'motion') det = `Intensitet: ${i.details.intensity||'N/A'}`;
+      else if (i.type === 'recording') det = `${i.details.frames||0} frames, ${Math.round((i.details.size||0)/1024)} KB`;
+      else if (i.type === 'gpio') det = `${i.details.pin_name||'?'}: ${i.details.state ? 'AKTIV' : 'Inaktiv'}`;
+      else if (i.type === 'scene') det = `Scen: ${i.details.scene_label || i.details.scene_name || '?'}`;
+      else det = JSON.stringify(i.details);
+      return `<div class="event-item"><div class="event-time">${esc(t)}</div><div class="event-type ${tc}">${esc(i.type)}</div><div class="event-details">${esc(det)}</div></div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = '<p style="color:var(--red)">Kunde inte ladda tidslinjen.</p>'; }
+}
+document.getElementById('timeline-date').value = new Date().toISOString().slice(0,10);
+document.getElementById('rec-date').value = new Date().toISOString().slice(0,10);
+
+// ===================================================================
+// RECORDINGS (on-demand from Pi clients)
+// ===================================================================
+function loadRemoteRecordings(){
+  const cam = document.getElementById('rec-camera').value;
+  const date = document.getElementById('rec-date').value;
+  if (!cam) return;
+  const el = document.getElementById('rec-list');
+  el.innerHTML = '<p style="color:var(--text3)">Hamtar inspelningar fran Pi-klienten...</p>';
+  ws.send(JSON.stringify({ type: 'get_remote_recordings', camera_id: cam, date: date || null, limit: 50, request_id: 'rec_' + Date.now() }));
+}
+
+function onRemoteRecordings(m){
+  const el = document.getElementById('rec-list');
+  const recs = m.recordings || [];
+  if (!recs.length) { el.innerHTML = '<p style="color:var(--text3)">Inga inspelningar hittades.</p>'; return; }
+  el.innerHTML = recs.map(r => {
+    const time = (r.start_time || r.timestamp || '').split('T').pop()?.slice(0,8) || '';
+    const dur = r.duration ? Math.round(r.duration) + 's' : '?';
+    const frames = r.frame_count || '?';
+    const size = r.size_kb ? Math.round(r.size_kb) + ' KB' : '?';
+    const trigger = r.trigger || 'motion';
+    const tc = trigger === 'ai' ? 'ai' : trigger === 'gpio' ? 'gpio' : 'motion';
+    return `<div class="event-item" onclick="playRemoteClip('${m.camera_id}', '${esc(r.path)}')">
+      <div class="event-time">${esc(time)}</div>
+      <div class="event-type ${tc}">${esc(trigger)}</div>
+      <div class="event-details">${dur} &middot; ${frames} frames &middot; ${size}${r.objects ? ' &middot; ' + esc(r.objects) : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function playRemoteClip(camId, clipPath){
+  document.getElementById('pb-title').textContent = `Inspelning - ${cameras.get(camId)?.name || camId}`;
+  document.getElementById('playback-overlay').classList.add('active');
+  document.getElementById('pb-img').src = '';
+  document.getElementById('pb-frame-info').textContent = 'Hamtar...';
+  document.getElementById('pb-slider').max = 0;
+  playbackFrames = []; playbackIndex = 0; playbackPlaying = false;
+  ws.send(JSON.stringify({ type: 'get_remote_clip', camera_id: camId, clip_path: clipPath, max_frames: 200, request_id: 'clip_' + Date.now() }));
+}
+
+function onRemoteClip(m){
+  playbackFrames = (m.frames || []).map(f => 'data:image/jpeg;base64,' + f.data);
+  if (!playbackFrames.length) { document.getElementById('pb-frame-info').textContent = 'Inga frames'; return; }
+  document.getElementById('pb-slider').max = playbackFrames.length - 1;
+  document.getElementById('pb-slider').value = 0;
+  showPlaybackFrame(0);
+}
+
+function showPlaybackFrame(idx){
+  if (idx < 0 || idx >= playbackFrames.length) return;
+  playbackIndex = idx;
+  document.getElementById('pb-img').src = playbackFrames[idx];
+  document.getElementById('pb-slider').value = idx;
+  document.getElementById('pb-frame-info').textContent = `${idx+1}/${playbackFrames.length}`;
+}
+
+function seekPlayback(val){ showPlaybackFrame(parseInt(val)); }
+
+function togglePlayback(){
+  if (playbackPlaying) {
+    clearInterval(playbackTimer); playbackPlaying = false;
+    document.getElementById('pb-play').innerHTML = '&#x25B6;';
+  } else {
+    playbackPlaying = true;
+    document.getElementById('pb-play').innerHTML = '&#x23F8;';
+    playbackTimer = setInterval(() => {
+      if (playbackIndex >= playbackFrames.length - 1) { togglePlayback(); return; }
+      showPlaybackFrame(playbackIndex + 1);
+    }, 100);
+  }
+}
+
+function closePlayback(){
+  clearInterval(playbackTimer); playbackPlaying = false; playbackFrames = [];
+  document.getElementById('playback-overlay').classList.remove('active');
+}
+
+function onRemoteThumbnail(m){}
+
+// ===================================================================
+// NOTIFICATION SETTINGS
+// ===================================================================
+function onNotificationSettings(m){
+  // Render in admin page
+  const container = document.getElementById('notif-settings-container');
+  if (!container) return;
+  const s = m.settings || {};
+  container.innerHTML = `<div class="health-card" style="max-width:500px">
+    <h4 style="margin-bottom:12px">${esc(cameras.get(m.camera_id)?.name || m.camera_id)}</h4>
+    <div class="notif-row"><span class="notif-label">Notis vid rorelse</span>
+      <label class="gpio-toggle"><input type="checkbox" ${s.motion !== false ? 'checked' : ''} onchange="updateNotifSetting('${m.camera_id}','motion',this.checked)"><span class="gt-slider"></span></label></div>
+    <div class="notif-row"><span class="notif-label">Notis vid GPIO-event</span>
+      <label class="gpio-toggle"><input type="checkbox" ${s.gpio !== false ? 'checked' : ''} onchange="updateNotifSetting('${m.camera_id}','gpio',this.checked)"><span class="gt-slider"></span></label></div>
+    <div class="notif-row"><span class="notif-label">Inkludera snapshot</span>
+      <label class="gpio-toggle"><input type="checkbox" ${s.include_snapshot !== false ? 'checked' : ''} onchange="updateNotifSetting('${m.camera_id}','include_snapshot',this.checked)"><span class="gt-slider"></span></label></div>
+  </div>`;
+}
+
+function updateNotifSetting(camId, key, value){
+  ws.send(JSON.stringify({ type: 'update_notification_settings', camera_id: camId, settings: { [key]: value } }));
+}
+
+// ===================================================================
+// ADMIN
+// ===================================================================
+async function loadAdmin(){
+  if (user?.role !== 'admin') return;
+  try {
+    const h = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const r = await fetch(`${httpBase}/api/users`, { headers: h });
+    const d = await r.json();
+    document.getElementById('user-tbody').innerHTML = (d.users||[]).map(u =>
+      `<tr><td><strong>${esc(u.display_name||u.username)}</strong><br><span style="font-size:12px;color:var(--text3)">${esc(u.username)}</span></td><td><span class="role-badge ${u.role}">${u.role}</span></td><td style="font-size:13px">${esc(u.allowed_cameras)}</td><td style="font-size:13px;color:var(--text2)">${u.last_login||'Aldrig'}</td><td><button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})">Ta bort</button></td></tr>`
+    ).join('');
+  } catch(e) {}
+
+  // Notification settings per camera
+  const nc = document.getElementById('notif-settings-container');
+  nc.innerHTML = '<p style="color:var(--text3)">Valj en kamera for att se notis-installningar.</p>';
+  let ncHtml = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+  cameras.forEach((c, id) => {
+    ncHtml += `<button class="btn btn-sm" style="background:var(--bg3)" onclick="ws.send(JSON.stringify({type:'get_notification_settings',camera_id:'${id}'}))">${esc(c.name)}</button>`;
+  });
+  ncHtml += '</div><div id="notif-detail"></div>';
+  nc.innerHTML = ncHtml;
+
+  try {
+    const h = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const r = await fetch(`${httpBase}/api/audit-log?limit=20`, { headers: h });
+    const d = await r.json();
+    document.getElementById('audit-log').innerHTML = (d.log||[]).map(l =>
+      `<div class="event-item"><div class="event-time">${(l.created_at||'').slice(11,19)}</div><div class="event-type ${l.action === 'gpio' ? 'gpio' : l.action === 'scene' ? 'scene' : 'manual'}">${esc(l.action)}</div><div class="event-details">${esc(l.username||'system')} - ${esc(l.details||'')}</div></div>`
+    ).join('');
+  } catch(e) {}
+}
+
+function showAddUserModal(){
+  document.getElementById('modal-username').value = '';
+  document.getElementById('modal-password').value = '';
+  document.getElementById('modal-role').value = 'user';
+  document.getElementById('modal-cameras').value = '*';
+  document.getElementById('user-modal').classList.add('active');
+}
+function closeModal(){ document.getElementById('user-modal').classList.remove('active'); }
+
+async function saveUser(){
+  const b = {
+    username: document.getElementById('modal-username').value,
+    password: document.getElementById('modal-password').value,
+    role: document.getElementById('modal-role').value,
+    allowedCameras: document.getElementById('modal-cameras').value
+  };
+  if (!b.username || !b.password) return;
+  try {
+    const h = { 'Content-Type': 'application/json' };
+    if (token) h['Authorization'] = `Bearer ${token}`;
+    await fetch(`${httpBase}/api/users`, { method: 'POST', headers: h, body: JSON.stringify(b) });
+    closeModal(); loadAdmin();
+  } catch(e) {}
+}
+
+async function deleteUser(id){
+  if (!confirm('Ta bort denna anvandare?')) return;
+  try {
+    const h = {}; if (token) h['Authorization'] = `Bearer ${token}`;
+    await fetch(`${httpBase}/api/users/${id}`, { method: 'DELETE', headers: h });
+    loadAdmin();
+  } catch(e) {}
+}
+
+// ===================================================================
+// UTILS
+// ===================================================================
+function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
+function esc(s){ return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
+
+// PWA
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeFullscreen(); closePlayback(); }
+  if (e.key === 'f' && fullscreenCameraId) document.getElementById('fullscreen-overlay').requestFullscreen?.();
+});
+
+// Periodic GPIO refresh
+setInterval(() => { if (document.getElementById('page-gpio').style.display !== 'none') requestAllGPIOStates(); }, 10000);
+</script>
+</body>
+</html>

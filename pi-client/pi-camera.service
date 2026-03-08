@@ -1,0 +1,19 @@
+[Unit]
+Description=Pi Camera Streaming Client (HA Add-on)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/pi-camera-client
+ExecStart=/usr/bin/python3 /home/pi/pi-camera-client/camera_client.py --config /home/pi/pi-camera-client/cameras.yaml
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+
+[Install]
+WantedBy=multi-user.target

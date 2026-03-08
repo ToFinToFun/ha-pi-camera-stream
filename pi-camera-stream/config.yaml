@@ -1,0 +1,50 @@
+name: "Pi Camera Stream"
+version: "5.0.0"
+slug: "pi_camera_stream"
+description: "Stream video from Raspberry Pi cameras and Axis/RTSP network cameras. View multiple cameras in a grid, with motion detection, recording, PTZ control, and AI object detection."
+url: "https://github.com/pi-camera-stream/ha-addon"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+  - i386
+startup: "application"
+boot: "auto"
+ingress: true
+ingress_port: 8099
+ingress_stream: true
+panel_icon: "mdi:cctv"
+panel_title: "Kameror"
+homeassistant_api: true
+hassio_api: true
+auth_api: true
+map:
+  - type: share
+    read_only: false
+  - type: ssl
+    read_only: true
+  - type: media
+    read_only: false
+ports:
+  8765/tcp: null
+ports_description:
+  8765/tcp: "WebSocket relay port (disabled when using ingress)"
+options:
+  camera_secret: ""
+  jwt_secret: ""
+  mqtt_enabled: false
+  mqtt_topic_prefix: "pi_camera_stream"
+  recording_enabled: true
+  recording_path: "/media/pi-camera-recordings"
+  max_recording_size_mb: 1000
+  log_level: "info"
+schema:
+  camera_secret: "str"
+  jwt_secret: "str"
+  mqtt_enabled: "bool"
+  mqtt_topic_prefix: "str"
+  recording_enabled: "bool"
+  recording_path: "str"
+  max_recording_size_mb: "int"
+  log_level: "list(debug|info|warn|error)"
