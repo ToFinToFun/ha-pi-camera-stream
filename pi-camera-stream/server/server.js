@@ -1539,6 +1539,7 @@ const SSL_DIR = '/ssl';
 function findSSLCerts() {
   const certNames = [
     { cert: 'fullchain.pem', key: 'privkey.pem' },
+    { cert: 'origin.pem', key: 'privkey.pem' },
     { cert: 'certificate.pem', key: 'private_key.pem' },
     { cert: 'cert.pem', key: 'key.pem' },
     { cert: 'server.crt', key: 'server.key' },
