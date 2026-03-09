@@ -21,6 +21,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -307,6 +308,12 @@ class HardwareDetector:
         if info['machine'] in ('x86_64', 'AMD64', 'i686'):
             info['device_type'] = 'x86_pc'
 
+        # Windows-specifik detektering
+        if info['system'] == 'Windows':
+            info['device_type'] = 'windows_pc'
+            info['device_model'] = f"Windows {platform.version()} ({info['machine']})"
+            info['gpio_supported'] = False
+
         # Jetson
         try:
             result = subprocess.run(['cat', '/etc/nv_tegra_release'], capture_output=True, text=True)
@@ -321,11 +328,12 @@ class HardwareDetector:
         """Detektera CPU-information."""
         info = {
             'cores': os.cpu_count() or 1,
-            'model': '',
+            'model': platform.processor() or '',
             'max_freq_mhz': 0,
             'architecture': platform.machine(),
         }
 
+        # Linux: läs /proc/cpuinfo
         try:
             with open('/proc/cpuinfo', 'r') as f:
                 for line in f:
@@ -334,13 +342,17 @@ class HardwareDetector:
                     elif line.startswith('Hardware'):
                         if not info['model']:
                             info['model'] = line.split(':', 1)[1].strip()
+        except FileNotFoundError:
+            pass  # Windows/macOS - använd platform.processor() ovan
         except Exception:
             pass
 
-        # Max frekvens
+        # Max frekvens (Linux)
         try:
             with open('/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq', 'r') as f:
                 info['max_freq_mhz'] = int(f.read().strip()) // 1000
+        except FileNotFoundError:
+            pass  # Windows/macOS
         except Exception:
             pass
 
@@ -349,6 +361,8 @@ class HardwareDetector:
     def _detect_memory(self):
         """Detektera minne."""
         info = {'total_mb': 0, 'available_mb': 0}
+
+        # Linux: /proc/meminfo
         try:
             with open('/proc/meminfo', 'r') as f:
                 for line in f:
@@ -359,6 +373,39 @@ class HardwareDetector:
                         info['total_mb'] = val_kb // 1024
                     elif key == 'MemAvailable':
                         info['available_mb'] = val_kb // 1024
+        except FileNotFoundError:
+            # Windows/macOS fallback
+            try:
+                import psutil
+                mem = psutil.virtual_memory()
+                info['total_mb'] = mem.total // (1024 * 1024)
+                info['available_mb'] = mem.available // (1024 * 1024)
+            except ImportError:
+                # Utan psutil, försök via os
+                try:
+                    if sys.platform == 'win32':
+                        import ctypes
+                        kernel32 = ctypes.windll.kernel32
+                        c_ulonglong = ctypes.c_ulonglong
+                        class MEMORYSTATUSEX(ctypes.Structure):
+                            _fields_ = [
+                                ('dwLength', ctypes.c_ulong),
+                                ('dwMemoryLoad', ctypes.c_ulong),
+                                ('ullTotalPhys', c_ulonglong),
+                                ('ullAvailPhys', c_ulonglong),
+                                ('ullTotalPageFile', c_ulonglong),
+                                ('ullAvailPageFile', c_ulonglong),
+                                ('ullTotalVirtual', c_ulonglong),
+                                ('ullAvailVirtual', c_ulonglong),
+                                ('ullAvailExtendedVirtual', c_ulonglong),
+                            ]
+                        stat = MEMORYSTATUSEX()
+                        stat.dwLength = ctypes.sizeof(stat)
+                        kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+                        info['total_mb'] = stat.ullTotalPhys // (1024 * 1024)
+                        info['available_mb'] = stat.ullAvailPhys // (1024 * 1024)
+                except Exception:
+                    pass
         except Exception:
             pass
         return info
@@ -742,16 +789,19 @@ class HardwareDetector:
 
         gpio_info = hw.get('gpio', {})
         device_name = hw.get('device_name', 'unknown')
+        gpio_supported = platform_info.get('gpio_supported', platform_info.get('device_type') == 'raspberry_pi')
 
         return {
             'device': device,
             'device_name': device_name,
+            'platform': platform_info.get('system', 'Unknown'),
             'cpu': f"{cpu_model} ({cores} kärnor)",
             'ram_mb': ram,
             'cpu_score': cpu_score,
             'accelerators': accel_names,
-            'gpio_pin_count': gpio_info.get('pin_count', 0),
-            'gpio_library': gpio_info.get('recommended_library', 'gpiozero'),
+            'gpio_supported': gpio_supported,
+            'gpio_pin_count': gpio_info.get('pin_count', 0) if gpio_supported else 0,
+            'gpio_library': gpio_info.get('recommended_library', 'N/A') if gpio_supported else 'N/A',
             'recommended_level': self.recommended_level,
             'recommended_label': DETECTION_LEVELS[self.recommended_level]['label'],
             'available_levels': [

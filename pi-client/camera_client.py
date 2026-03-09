@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Pi Camera Client v5.0
-=====================
+Camera Client v5.2
+==================
 
 Fångar video från en eller flera kameror och strömmar JPEG-frames
 via WebSocket till relay-servern.
 
+Plattformar: Raspberry Pi (alla modeller), Windows, Linux x86/ARM
+
 Stöder:
 - Axis nätverkskameror (via VAPIX HTTP API eller RTSP)
 - Generiska RTSP/ONVIF nätverkskameror (via OpenCV)
-- Raspberry Pi Camera Module (via picamera2)
+- Raspberry Pi Camera Module (via picamera2) [bara Pi]
 - USB-kameror (via OpenCV)
+- GPIO digitala in/utgångar [bara Pi]
 - Testläge med genererade bilder (för utveckling)
 
-v5.0 Nyheter:
-- GPIO-stöd: digitala in/utgångar, scener, fjärrstyrning
-- Förbättrade push-notiser per kamera med tysta timmar
-- Lokal inspelning vid rörelse (sparar på Pi:n, inte servern)
-- Automatisk hårdvarudetektering och val av detekteringsnivå
-- Fjärrstyrning av detekteringsnivå via viewer-appen
-- On-demand hämtning av inspelningar
-- Hälsorapportering med lagringsstatus
+Plattformsspecifikt:
+- GPIO: Aktiveras automatiskt på Raspberry Pi, inaktiveras på Windows/x86
+- Pi Camera Module: Bara tillgängligt på Raspberry Pi
+- Hårdvarudetektering: Anpassar sig automatiskt till plattformen
+- Nätverkskameror (Axis/RTSP): Fungerar på alla plattformar
 """
 
 import asyncio
@@ -1211,17 +1211,22 @@ class MultiCameraManager:
             except ImportError:
                 logger.warning("local_recorder module not available")
 
-        # Initiera GPIO
+        # Initiera GPIO (bara tillgängligt på Raspberry Pi, simuleringsläge på andra plattformar)
         gpio_config = config.get('gpio', {})
-        if gpio_config.get('enabled'):
+        is_windows = sys.platform == 'win32'
+        if gpio_config.get('inputs') or gpio_config.get('outputs'):
             try:
                 from gpio_controller import GPIOController
                 self.gpio_controller = GPIOController(gpio_config)
                 self.gpio_controller.start()
-                logger.info(f"GPIO Controller started: {len(self.gpio_controller.pins)} pins, "
+                from gpio_controller import GPIO_AVAILABLE
+                mode = 'simulering' if is_windows or not GPIO_AVAILABLE else 'hårdvara'
+                logger.info(f"GPIO Controller started ({mode}): {len(self.gpio_controller.pins)} pins, "
                             f"{len(self.gpio_controller.scenes)} scenes")
             except Exception as e:
                 logger.warning(f"GPIO initialization failed: {e}")
+        elif is_windows:
+            logger.info("GPIO: Inaktiverat (Windows-plattform, GPIO kräver Raspberry Pi)")
 
     def setup(self):
         server_config = self.config.get('server', DEFAULT_CONFIG['server'])
@@ -1436,8 +1441,9 @@ def main():
         logger.info(f"Signal {sig} received, shutting down...")
         manager.stop()
 
-    signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+    if hasattr(signal, 'SIGTERM'):
+        signal.signal(signal.SIGTERM, signal_handler)
 
     try:
         manager.setup()
