@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PiCam">
+<meta name="theme-color" content="#1a237e">
+<meta name="description" content="Streama din kamera till Pi Camera säkerhetssystem">
+<link rel="manifest" href="webcam-manifest.json">
+<link rel="apple-touch-icon" href="webcam-icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="webcam-icon-192.png">
 <title>Webbkamera - Pi Camera Stream</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -752,6 +759,37 @@ if (!document.getElementById('cameraName').value) {
   const isMobile = /Android|iPhone|iPad/.test(navigator.userAgent);
   document.getElementById('cameraName').value = isMobile ? 'Mobil' : 'Webbkamera';
 }
+
+// PWA Service Worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('webcam-sw.js')
+    .then(reg => console.log('Service Worker registered:', reg.scope))
+    .catch(err => console.log('Service Worker registration failed:', err));
+}
+
+// PWA Install prompt
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  // Show install button
+  const btn = document.createElement('button');
+  btn.textContent = 'Installera app';
+  btn.style.cssText = 'position:fixed;bottom:16px;right:16px;background:#4CAF50;color:#fff;border:none;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+  btn.onclick = async () => {
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log('Install prompt outcome:', outcome);
+    deferredPrompt = null;
+    btn.remove();
+  };
+  document.body.appendChild(btn);
+});
+
+window.addEventListener('appinstalled', () => {
+  console.log('PWA installed');
+  deferredPrompt = null;
+});
 </script>
 </body>
 </html>
