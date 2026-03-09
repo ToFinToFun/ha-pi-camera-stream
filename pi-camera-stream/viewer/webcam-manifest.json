@@ -1,7 +1,7 @@
 {
-  "name": "Pi Camera - Webbkamera",
-  "short_name": "PiCam",
-  "description": "Streama din kamera till Pi Camera säkerhetssystem",
+  "name": "JPsecurity - Webbkamera",
+  "short_name": "JPsecurity",
+  "description": "Streama din kamera till JPsecurity säkerhetssystem",
   "start_url": "./webcam.html",
   "display": "standalone",
   "orientation": "any",
