@@ -11,6 +11,7 @@
 const WebSocket = require('ws');
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
@@ -1532,7 +1533,54 @@ server.listen(CONFIG.port, '0.0.0.0', () => {
 
 // ── Direct WebSocket port (8765) for external/Cloudflare access ──────
 const DIRECT_PORT = 8765;
-const directServer = http.createServer(app); // Reuse same Express app
+const SSL_DIR = '/ssl';
+
+// Auto-detect SSL certificates
+function findSSLCerts() {
+  const certNames = [
+    { cert: 'fullchain.pem', key: 'privkey.pem' },
+    { cert: 'certificate.pem', key: 'private_key.pem' },
+    { cert: 'cert.pem', key: 'key.pem' },
+    { cert: 'server.crt', key: 'server.key' },
+    { cert: 'tls.crt', key: 'tls.key' },
+    { cert: 'ssl.crt', key: 'ssl.key' },
+  ];
+  
+  for (const pair of certNames) {
+    const certPath = path.join(SSL_DIR, pair.cert);
+    const keyPath = path.join(SSL_DIR, pair.key);
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      console.log(`[SSL] Found certificates: ${pair.cert} + ${pair.key}`);
+      return { cert: certPath, key: keyPath };
+    }
+  }
+  
+  // Also check for any .pem files as fallback
+  try {
+    const files = fs.readdirSync(SSL_DIR);
+    console.log(`[SSL] Files in ${SSL_DIR}: ${files.join(', ')}`);
+  } catch(e) {
+    console.log(`[SSL] Cannot read ${SSL_DIR}: ${e.message}`);
+  }
+  
+  return null;
+}
+
+const sslCerts = findSSLCerts();
+let directServer;
+
+if (sslCerts) {
+  const sslOptions = {
+    cert: fs.readFileSync(sslCerts.cert),
+    key: fs.readFileSync(sslCerts.key),
+  };
+  directServer = https.createServer(sslOptions, app);
+  console.log(`[SSL] Direct port ${DIRECT_PORT} will use HTTPS/WSS`);
+} else {
+  directServer = http.createServer(app);
+  console.log(`[SSL] No certificates found in ${SSL_DIR}, direct port ${DIRECT_PORT} will use HTTP/WS`);
+}
+
 const directWss = new WebSocket.Server({ server: directServer });
 
 // Share the same connection handler as the main WSS
@@ -1584,7 +1632,7 @@ const directHeartbeat = setInterval(() => {
 directWss.on('close', () => clearInterval(directHeartbeat));
 
 directServer.listen(DIRECT_PORT, '0.0.0.0', () => {
-  console.log(`Direct WebSocket server on port ${DIRECT_PORT}`);
+  console.log(`Direct ${sslCerts ? 'HTTPS/WSS' : 'HTTP/WS'} server on port ${DIRECT_PORT}`);
   if (CONFIG.directWsUrl) {
     console.log(`  External URL: ${CONFIG.directWsUrl}`);
   }
