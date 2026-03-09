@@ -57,6 +57,8 @@ class GPIOPin:
         self.debounce_ms = debounce_ms
         self.default_state = default_state
         self.state = default_state
+        self.enabled = True  # Can be toggled from GUI
+        self.label = name.replace('_', ' ').title()  # Human-readable label, editable from GUI
         self.last_change = 0
         self.change_count = 0
         self._callbacks: List[Callable] = []
@@ -67,6 +69,8 @@ class GPIOPin:
 
     def notify(self, new_state: bool):
         """Notifiera alla callbacks om tillståndsändring."""
+        if not self.enabled:
+            return  # Ignore state changes when pin is disabled
         old_state = self.state
         self.state = new_state
         self.last_change = time.time()
@@ -82,8 +86,10 @@ class GPIOPin:
         return {
             'pin': self.pin_number,
             'name': self.name,
+            'label': self.label,
             'direction': self.direction,
             'state': self.state,
+            'enabled': self.enabled,
             'active_low': self.active_low,
             'last_change': self.last_change,
             'change_count': self.change_count,
@@ -355,6 +361,45 @@ class GPIOController:
         if not pin or pin.direction != 'output':
             return False
         return self.set_output(name, not pin.state)
+
+    def set_pin_enabled(self, name: str, enabled: bool) -> bool:
+        """Aktivera eller inaktivera en pin (från GUI).
+        
+        När en ingång är inaktiverad ignoreras tillståndsändringar
+        och inga events skickas till servern/MQTT.
+        """
+        pin = self.pins.get(name)
+        if not pin:
+            logger.warning(f"GPIO: Kan inte ändra '{name}' - finns inte")
+            return False
+
+        pin.enabled = enabled
+        logger.info(f"GPIO: {name} (pin {pin.pin_number}) {'aktiverad' if enabled else 'inaktiverad'} via GUI")
+
+        # Fire event so server/MQTT knows about the change
+        if self._event_callback:
+            self._event_callback({
+                'type': 'gpio_pin_enabled',
+                'pin_name': name,
+                'pin_number': pin.pin_number,
+                'direction': pin.direction,
+                'enabled': enabled,
+                'timestamp': time.time(),
+            })
+
+        return True
+
+    def rename_pin_label(self, name: str, label: str) -> bool:
+        """Byt visningsnamn (label) på en pin från GUI."""
+        pin = self.pins.get(name)
+        if not pin:
+            logger.warning(f"GPIO: Kan inte döpa om '{name}' - finns inte")
+            return False
+
+        old_label = pin.label
+        pin.label = label
+        logger.info(f"GPIO: {name} (pin {pin.pin_number}) omdöpt: '{old_label}' -> '{label}'")
+        return True
 
     def get_input(self, name: str) -> Optional[bool]:
         """Läs en ingång."""

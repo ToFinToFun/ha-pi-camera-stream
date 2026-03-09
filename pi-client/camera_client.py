@@ -34,6 +34,7 @@ import io
 import threading
 import queue
 import os
+import platform
 import base64
 from datetime import datetime
 from pathlib import Path
@@ -572,12 +573,14 @@ class CameraStreamClient:
     def __init__(self, server_url, secret, camera_backend, motion_config=None,
                  notification_manager=None, object_detector=None,
                  adaptive_config=None, ptz_config=None, recorder=None,
-                 detection_level=1, hardware_summary=None, gpio_controller=None):
+                 detection_level=1, hardware_summary=None, gpio_controller=None,
+                 client_name=None):
         self.server_url = server_url
         self.secret = secret
         self.camera = camera_backend
         self.camera_id = camera_backend.camera_id
         self.camera_name = camera_backend.name
+        self.client_name = client_name or platform.node()
         self.running = False
         self.ws = None
         self.reconnect_delay = 1
@@ -718,6 +721,7 @@ class CameraStreamClient:
             "secret": self.secret,
             "camera_id": self.camera_id,
             "name": self.camera_name,
+            "client_name": self.client_name,
             "resolution": self.camera.resolution_str,
             "capabilities": capabilities,
         }
@@ -1052,6 +1056,30 @@ class CameraStreamClient:
                         'request_id': msg.get('request_id'),
                     }))
 
+                elif command == 'set_pin_enabled':
+                    pin_name = params.get('pin_name')
+                    enabled = params.get('enabled', True)
+                    success = self.gpio.set_pin_enabled(pin_name, enabled)
+                    await ws.send(json.dumps({
+                        'type': 'gpio_pin_enabled',
+                        'camera_id': self.camera_id,
+                        'pin_name': pin_name,
+                        'enabled': enabled,
+                        'success': success,
+                    }))
+
+                elif command == 'rename_pin_label':
+                    pin_name = params.get('pin_name')
+                    label = params.get('label', '')
+                    success = self.gpio.rename_pin_label(pin_name, label)
+                    await ws.send(json.dumps({
+                        'type': 'gpio_pin_renamed',
+                        'camera_id': self.camera_id,
+                        'pin_name': pin_name,
+                        'label': label,
+                        'success': success,
+                    }))
+
                 elif command == 'get_notification_config':
                     if self.notification_manager:
                         await ws.send(json.dumps({
@@ -1103,6 +1131,8 @@ class MultiCameraManager:
         self.cameras = []
         self.clients = []
         self.running = False
+        self.client_name = config.get('client_name', os.environ.get('PI_CLIENT_NAME', platform.node()))
+        logger.info(f"Pi client name: {self.client_name}")
 
         # Globala moduler
         self.notification_manager = None
@@ -1230,6 +1260,7 @@ class MultiCameraManager:
                     detection_level=detection_level,
                     hardware_summary=hw_summary,
                     gpio_controller=self.gpio_controller,
+                    client_name=self.client_name,
                 )
 
                 self.cameras.append(camera)

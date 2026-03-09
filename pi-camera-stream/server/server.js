@@ -1,5 +1,5 @@
 /**
- * Pi Camera Relay Server v5.1.1 – Home Assistant Add-on Edition
+ * Pi Camera Relay Server v5.2.0 – Home Assistant Add-on Edition
  * 
  * Anpassad för att köras som HA add-on med:
  * - Ingress-stöd (X-Ingress-Path header)
@@ -46,7 +46,7 @@ const CONFIG = {
 };
 
 console.log('===========================================');
-console.log('  Pi Camera Relay Server v5.1.1');
+console.log('  Pi Camera Relay Server v5.2.0');
 console.log('  Home Assistant Add-on Edition');
 console.log('===========================================');
 if (IS_HA_ADDON) {
@@ -284,7 +284,7 @@ app.get('/api/dashboard', authMiddleware(), (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '5.1.1-ha',
+    version: '5.2.0-ha',
     cameras: cameras.size,
     totalViewers: allViewers.size,
     uptime: Math.floor((Date.now() - serverStartTime) / 1000),
@@ -545,6 +545,8 @@ app.post('/api/poll/action/:viewerId', authMiddleware(), (req, res) => {
     case 'get_remote_clip':
     case 'get_gpio_states':
     case 'set_gpio_output':
+    case 'set_pin_enabled':
+    case 'rename_pin_label':
     case 'activate_scene':
     case 'get_storage_stats':
     case 'get_notification_settings':
@@ -1044,6 +1046,12 @@ function handleViewerRegistration(ws, msg, clientIp) {
         case 'get_gpio_states':
           handleGetGPIOStates(viewerObj, msg);
           break;
+        case 'set_pin_enabled':
+          handleSetPinEnabled(viewerObj, msg);
+          break;
+        case 'rename_pin_label':
+          handleRenamePinLabel(viewerObj, msg);
+          break;
         case 'update_notification_settings':
           handleUpdateNotificationSettings(viewerObj, msg);
           break;
@@ -1428,8 +1436,58 @@ function handleGetGPIOStates(viewerObj, msg) {
   setTimeout(() => cam.ws.removeListener('message', handler), 10000);
 }
 
-// ── Notis-inställningar ─────────────────────────────────────────────
+function handleSetPinEnabled(viewerObj, msg) {
+  const { camera_id, pin_name, enabled } = msg;
+  if (!camera_id || !cameras.has(camera_id)) return;
+  if (!auth.canControlCamera(viewerObj.user)) {
+    viewerObj.ws.send(JSON.stringify({ type: 'error', message: 'GPIO access denied' }));
+    return;
+  }
 
+  const cam = cameras.get(camera_id);
+  cam.ws.send(JSON.stringify({
+    type: 'viewer_command',
+    command: 'set_pin_enabled',
+    params: { pin_name, enabled },
+  }));
+
+  console.log(`[GPIO] Pin '${pin_name}' ${enabled ? 'enabled' : 'disabled'} on ${camera_id} by ${viewerObj.user.username}`);
+
+  // Broadcast to all viewers so they see the updated state
+  broadcastToAllViewers({
+    type: 'gpio_pin_enabled',
+    camera_id,
+    pin_name,
+    enabled,
+  });
+}
+function handleRenamePinLabel(viewerObj, msg) {
+  const { camera_id, pin_name, label } = msg;
+  if (!camera_id || !cameras.has(camera_id)) return;
+  if (!auth.canControlCamera(viewerObj.user)) {
+    viewerObj.ws.send(JSON.stringify({ type: 'error', message: 'GPIO access denied' }));
+    return;
+  }
+
+  const cam = cameras.get(camera_id);
+  cam.ws.send(JSON.stringify({
+    type: 'viewer_command',
+    command: 'rename_pin_label',
+    params: { pin_name, label },
+  }));
+
+  console.log(`[GPIO] Pin '${pin_name}' renamed to '${label}' on ${camera_id} by ${viewerObj.user.username}`);
+
+  // Broadcast to all viewers so they see the updated label
+  broadcastToAllViewers({
+    type: 'gpio_pin_renamed',
+    camera_id,
+    pin_name,
+    label,
+  });
+}
+
+// ── Notis-inställningar ───────────────────────────────────────────────────────
 function handleUpdateNotificationSettings(viewerObj, msg) {
   const { camera_id, settings } = msg;
   if (!camera_id || !cameras.has(camera_id)) return;

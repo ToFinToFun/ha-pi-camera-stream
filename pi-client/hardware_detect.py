@@ -74,6 +74,131 @@ DETECTION_LEVELS = {
 }
 
 
+# ── GPIO Pin-map per Pi-modell ──────────────────────────────────────────────
+# Alla moderna Pi:ar (3B+, 4, 5, Zero 2W) har samma 40-pin header.
+# Dessa är de GPIO-pinnar som är säkra att använda (undviker I2C, SPI, UART defaults).
+
+GPIO_PIN_MAP = {
+    # BCM-nummer: {'name': default-namn, 'physical': fysisk pin, 'notes': ''}
+    # Säkra generella GPIO-pinnar (inga speciella funktioner som default)
+    4:  {'name': 'gpio_4',  'physical': 7,  'notes': ''},
+    5:  {'name': 'gpio_5',  'physical': 29, 'notes': ''},
+    6:  {'name': 'gpio_6',  'physical': 31, 'notes': ''},
+    12: {'name': 'gpio_12', 'physical': 32, 'notes': 'PWM0'},
+    13: {'name': 'gpio_13', 'physical': 33, 'notes': 'PWM1'},
+    16: {'name': 'gpio_16', 'physical': 36, 'notes': ''},
+    17: {'name': 'gpio_17', 'physical': 11, 'notes': ''},
+    18: {'name': 'gpio_18', 'physical': 12, 'notes': 'PCM_CLK'},
+    19: {'name': 'gpio_19', 'physical': 35, 'notes': ''},
+    20: {'name': 'gpio_20', 'physical': 38, 'notes': ''},
+    21: {'name': 'gpio_21', 'physical': 40, 'notes': ''},
+    22: {'name': 'gpio_22', 'physical': 15, 'notes': ''},
+    23: {'name': 'gpio_23', 'physical': 16, 'notes': ''},
+    24: {'name': 'gpio_24', 'physical': 18, 'notes': ''},
+    25: {'name': 'gpio_25', 'physical': 22, 'notes': ''},
+    26: {'name': 'gpio_26', 'physical': 37, 'notes': ''},
+    27: {'name': 'gpio_27', 'physical': 13, 'notes': ''},
+}
+
+# Pinnar reserverade för speciella funktioner (inte i standard-listan)
+GPIO_RESERVED_PINS = {
+    0:  'I2C0 SDA',
+    1:  'I2C0 SCL',
+    2:  'I2C1 SDA',
+    3:  'I2C1 SCL',
+    7:  'SPI0 CE1',
+    8:  'SPI0 CE0',
+    9:  'SPI0 MISO',
+    10: 'SPI0 MOSI',
+    11: 'SPI0 SCLK',
+    14: 'UART TX',
+    15: 'UART RX',
+}
+
+# Pi-modellspecifika begränsningar
+GPIO_MODEL_NOTES = {
+    'RPi 5': {
+        'total_gpio': 28,
+        'notes': 'RP1 southbridge, ny GPIO-arkitektur. gpiozero rekommenderas.',
+        'library': 'gpiozero',
+    },
+    'RPi 4': {
+        'total_gpio': 28,
+        'notes': 'BCM2711. Stodjer RPi.GPIO och gpiozero.',
+        'library': 'RPi.GPIO',
+    },
+    'RPi 3': {
+        'total_gpio': 28,
+        'notes': 'BCM2837. Stodjer RPi.GPIO och gpiozero.',
+        'library': 'RPi.GPIO',
+    },
+    'RPi Zero 2': {
+        'total_gpio': 28,
+        'notes': 'BCM2710A1. Samma pinout som Pi 3, men lagre prestanda.',
+        'library': 'RPi.GPIO',
+    },
+    'RPi Zero': {
+        'total_gpio': 28,
+        'notes': 'BCM2835. 40-pin header (samma layout). Begransad CPU.',
+        'library': 'RPi.GPIO',
+    },
+}
+
+
+def get_available_gpio_pins(model_short=None):
+    """Returnera tillgangliga GPIO-pinnar for given Pi-modell.
+    
+    Alla moderna Pi:ar har samma 40-pin header, sa pin-mappen ar densamma.
+    Skillnaden ar rekommenderat GPIO-bibliotek.
+    """
+    pins = []
+    for bcm, info in sorted(GPIO_PIN_MAP.items()):
+        pins.append({
+            'bcm': bcm,
+            'physical': info['physical'],
+            'name': info['name'],
+            'notes': info['notes'],
+        })
+    
+    model_info = GPIO_MODEL_NOTES.get(model_short, {})
+    
+    return {
+        'pins': pins,
+        'pin_count': len(pins),
+        'recommended_library': model_info.get('library', 'gpiozero'),
+        'model_notes': model_info.get('notes', ''),
+        'reserved': {bcm: reason for bcm, reason in GPIO_RESERVED_PINS.items()},
+    }
+
+
+def get_device_name():
+    """Generera ett default-namn baserat pa hostname och Pi-modell."""
+    import socket
+    hostname = socket.gethostname()
+    
+    # Forsok lasa Pi-modell
+    model_short = ''
+    try:
+        with open('/proc/device-tree/model', 'r') as f:
+            model = f.read().strip('\x00').strip()
+            if 'Pi 5' in model:
+                model_short = 'rpi5'
+            elif 'Pi 4' in model:
+                model_short = 'rpi4'
+            elif 'Pi 3' in model:
+                model_short = 'rpi3'
+            elif 'Pi Zero 2' in model:
+                model_short = 'rpizero2'
+            elif 'Pi Zero' in model:
+                model_short = 'rpizero'
+    except FileNotFoundError:
+        pass
+    
+    if model_short and hostname in ('raspberrypi', 'localhost'):
+        return f"{model_short}-{hostname}"
+    return hostname
+
+
 class HardwareDetector:
     """
     Detekterar hårdvara, kör benchmark och rekommenderar detekteringsnivå.
@@ -101,6 +226,11 @@ class HardwareDetector:
             'storage': self._detect_storage(),
             'software': self._detect_software(),
         }
+
+        # Lägg till GPIO-info baserat på detekterad modell
+        model_short = self.hardware_info['platform'].get('device_model_short', '')
+        self.hardware_info['gpio'] = get_available_gpio_pins(model_short)
+        self.hardware_info['device_name'] = get_device_name()
 
         # Kör eller ladda benchmark
         if self.benchmark_file.exists():
@@ -610,12 +740,18 @@ class HardwareDetector:
 
         accel_names = [a['name'] for a in accel] if accel else ['Ingen']
 
+        gpio_info = hw.get('gpio', {})
+        device_name = hw.get('device_name', 'unknown')
+
         return {
             'device': device,
+            'device_name': device_name,
             'cpu': f"{cpu_model} ({cores} kärnor)",
             'ram_mb': ram,
             'cpu_score': cpu_score,
             'accelerators': accel_names,
+            'gpio_pin_count': gpio_info.get('pin_count', 0),
+            'gpio_library': gpio_info.get('recommended_library', 'gpiozero'),
             'recommended_level': self.recommended_level,
             'recommended_label': DETECTION_LEVELS[self.recommended_level]['label'],
             'available_levels': [
@@ -728,19 +864,32 @@ if __name__ == '__main__':
 
     config = auto_configure_detection()
 
-    print(f"\nDevice: {config['hardware_summary']['device']}")
-    print(f"CPU: {config['hardware_summary']['cpu']}")
-    print(f"RAM: {config['hardware_summary']['ram_mb']} MB")
-    print(f"CPU Score: {config['hardware_summary']['cpu_score']}")
-    print(f"Accelerators: {', '.join(config['hardware_summary']['accelerators'])}")
+    hw = config['hardware_summary']
+    print(f"\nDevice name: {hw.get('device_name', 'unknown')}")
+    print(f"Device: {hw['device']}")
+    print(f"CPU: {hw['cpu']}")
+    print(f"RAM: {hw['ram_mb']} MB")
+    print(f"CPU Score: {hw['cpu_score']}")
+    print(f"Accelerators: {', '.join(hw['accelerators'])}")
+    print(f"GPIO pins: {hw.get('gpio_pin_count', '?')} available")
+    print(f"GPIO library: {hw.get('gpio_library', '?')}")
 
     print(f"\nRecommended level: {config['detection_level']} - {config['detection_level_name']}")
-    print(f"  ({config['hardware_summary']['recommended_label']})")
+    print(f"  ({hw['recommended_label']})")
 
     print("\nAvailable levels:")
-    for l in config['hardware_summary']['available_levels']:
+    for l in hw['available_levels']:
         status = "✓" if l['available'] else "✗"
         print(f"  {status} Level {l['level']}: {l['label']}")
+
+    # Visa GPIO pin-map
+    gpio = get_available_gpio_pins()
+    print(f"\nGPIO Pin-map ({gpio['pin_count']} pins):")
+    print(f"  {'BCM':>4}  {'Phys':>4}  {'Name':<12}  Notes")
+    print(f"  {'----':>4}  {'----':>4}  {'----':<12}  -----")
+    for p in gpio['pins']:
+        notes = p['notes'] or ''
+        print(f"  {p['bcm']:>4}  {p['physical']:>4}  {p['name']:<12}  {notes}")
 
     print(f"\nMotion detection: {'Enabled' if config.get('motion', {}).get('enabled') else 'Disabled'}")
     print(f"Object detection: {'Enabled' if config.get('object_detection', {}).get('enabled') else 'Disabled'}")

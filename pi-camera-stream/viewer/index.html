@@ -150,6 +150,16 @@ a{color:var(--blue);text-decoration:none}
 .gpio-toggle .gt-slider::before{content:'';position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;left:2px;top:2px;transition:.2s}
 .gpio-toggle input:checked+.gt-slider{background:var(--green)}
 .gpio-toggle input:checked+.gt-slider::before{transform:translateX(18px)}
+.gpio-row.disabled{opacity:.4}
+.gpio-row .gpio-label{flex:1;cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.15)}
+.gpio-row .gpio-label:hover{color:var(--blue);border-bottom-color:var(--blue)}
+.gpio-row .gpio-pin-id{font-size:10px;color:var(--text3);margin-left:4px}
+.gpio-enable-toggle{position:relative;width:32px;height:18px;flex-shrink:0;margin-left:4px}
+.gpio-enable-toggle input{opacity:0;width:0;height:0}
+.gpio-enable-toggle .ge-slider{position:absolute;inset:0;background:var(--bg3);border-radius:9px;transition:.2s;cursor:pointer}
+.gpio-enable-toggle .ge-slider::before{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;left:2px;top:2px;transition:.2s}
+.gpio-enable-toggle input:checked+.ge-slider{background:var(--cyan)}
+.gpio-enable-toggle input:checked+.ge-slider::before{transform:translateX(14px)}
 
 /* Scenes */
 .scene-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:10px}
@@ -968,6 +978,8 @@ function handleMsg(m){
     case 'scene_activated': onSceneActivated(m); break;
     case 'gpio_states_response': onGPIOStatesResponse(m); break;
     case 'gpio_output_set': onGPIOOutputSet(m); break;
+    case 'gpio_pin_enabled': onGPIOPinEnabled(m); break;
+    case 'gpio_pin_renamed': onGPIOPinRenamed(m); break;
     case 'notification_settings': onNotificationSettings(m); break;
     case 'error':
       dbg(`Server error: ${m.message}`, 'error');
@@ -1256,6 +1268,42 @@ function onGPIOOutputSet(m){
   renderGPIOPage();
 }
 
+function onGPIOPinEnabled(m){
+  const gs = gpioStates.get(m.camera_id);
+  if (gs) {
+    const pin = gs.inputs?.find(i => i.name === m.pin_name) || gs.outputs?.find(o => o.name === m.pin_name);
+    if (pin) pin.enabled = m.enabled;
+  }
+  showToast(`${m.pin_name} ${m.enabled ? 'aktiverad' : 'inaktiverad'}`, 'gpio');
+  if (fullscreenCameraId === m.camera_id) renderFSGPIOPanel(m.camera_id);
+  renderGPIOPage();
+}
+
+function onGPIOPinRenamed(m){
+  const gs = gpioStates.get(m.camera_id);
+  if (gs) {
+    const pin = gs.inputs?.find(i => i.name === m.pin_name) || gs.outputs?.find(o => o.name === m.pin_name);
+    if (pin) pin.label = m.label;
+  }
+  showToast(`${m.pin_name} omdopt till '${m.label}'`, 'gpio');
+  if (fullscreenCameraId === m.camera_id) renderFSGPIOPanel(m.camera_id);
+  renderGPIOPage();
+}
+
+function setPinEnabled(camId, pinName, enabled){
+  tSend({ type: 'set_pin_enabled', camera_id: camId, pin_name: pinName, enabled: enabled });
+}
+
+function renamePinLabel(camId, pinName){
+  const gs = gpioStates.get(camId) || {};
+  const pin = gs.inputs?.find(i => i.name === pinName) || gs.outputs?.find(o => o.name === pinName);
+  const currentLabel = pin?.label || pinName;
+  const newLabel = prompt('Nytt namn for ' + pinName + ':', currentLabel);
+  if (newLabel && newLabel.trim() && newLabel !== currentLabel) {
+    tSend({ type: 'rename_pin_label', camera_id: camId, pin_name: pinName, label: newLabel.trim() });
+  }
+}
+
 function requestAllGPIOStates(){
   cameras.forEach((c, id) => {
     tSend({ type: 'get_gpio_states', camera_id: id, request_id: 'init_' + Date.now() });
@@ -1281,7 +1329,8 @@ function renderFSGPIOPanel(camId){
   if (outputs.length) {
     outEl.innerHTML = '<div class="gpio-outputs">' + outputs.map(o =>
       `<div class="gpio-row">
-        <span class="gpio-name">${esc(o.name)}</span>
+        <span class="gpio-label" onclick="renamePinLabel('${camId}','${esc(o.name)}')" title="Klicka for att byta namn">${esc(o.label || o.name)}</span>
+        <span class="gpio-pin-id">pin ${o.pin}</span>
         <label class="gpio-toggle">
           <input type="checkbox" ${o.state ? 'checked' : ''} onchange="setGPIOOutput('${camId}','${esc(o.name)}',this.checked)">
           <span class="gt-slider"></span>
@@ -1296,10 +1345,15 @@ function renderFSGPIOPanel(camId){
   const inEl = document.getElementById('fs-gpio-inputs');
   if (inputs.length) {
     inEl.innerHTML = inputs.map(i =>
-      `<div class="gpio-row">
-        <span class="gpio-state ${i.state ? 'on' : 'off'}"></span>
-        <span class="gpio-name">${esc(i.name)}</span>
-        <span style="font-size:11px;color:${i.state ? 'var(--green)' : 'var(--text3)'}">${i.state ? 'AKTIV' : 'Inaktiv'}</span>
+      `<div class="gpio-row${i.enabled === false ? ' disabled' : ''}">
+        <span class="gpio-state ${i.enabled !== false && i.state ? 'on' : 'off'}"></span>
+        <span class="gpio-label" onclick="renamePinLabel('${camId}','${esc(i.name)}')" title="Klicka for att byta namn">${esc(i.label || i.name)}</span>
+        <span class="gpio-pin-id">pin ${i.pin}</span>
+        <span style="font-size:11px;color:${i.enabled !== false && i.state ? 'var(--green)' : 'var(--text3)'}">${i.enabled === false ? 'AV' : (i.state ? 'AKTIV' : 'Inaktiv')}</span>
+        <label class="gpio-enable-toggle" title="${i.enabled !== false ? 'Inaktivera sensor' : 'Aktivera sensor'}">
+          <input type="checkbox" ${i.enabled !== false ? 'checked' : ''} onchange="setPinEnabled('${camId}','${esc(i.name)}',this.checked)">
+          <span class="ge-slider"></span>
+        </label>
       </div>`
     ).join('');
     document.getElementById('fs-gpio-inputs-section').style.display = '';
@@ -1347,7 +1401,8 @@ function renderGPIOPage(){
       html += '<div style="margin-bottom:12px"><strong style="font-size:12px;color:var(--text2)">Utgongar</strong><div class="gpio-outputs" style="margin-top:6px">';
       outputs.forEach(o => {
         html += `<div class="gpio-row">
-          <span class="gpio-name">${esc(o.name)}</span>
+          <span class="gpio-label" onclick="renamePinLabel('${camId}','${esc(o.name)}')" title="Klicka for att byta namn">${esc(o.label || o.name)}</span>
+          <span class="gpio-pin-id">pin ${o.pin}</span>
           <label class="gpio-toggle">
             <input type="checkbox" ${o.state ? 'checked' : ''} onchange="setGPIOOutput('${camId}','${esc(o.name)}',this.checked)">
             <span class="gt-slider"></span>
@@ -1361,10 +1416,15 @@ function renderGPIOPage(){
     if (inputs.length) {
       html += '<div style="margin-bottom:12px"><strong style="font-size:12px;color:var(--text2)">Sensorer</strong><div class="gpio-inputs" style="margin-top:6px">';
       inputs.forEach(i => {
-        html += `<div class="gpio-row">
-          <span class="gpio-state ${i.state ? 'on' : 'off'}"></span>
-          <span class="gpio-name">${esc(i.name)}</span>
-          <span style="font-size:11px;color:${i.state ? 'var(--green)' : 'var(--text3)'}">${i.state ? 'AKTIV' : 'Inaktiv'}</span>
+        html += `<div class="gpio-row${i.enabled === false ? ' disabled' : ''}">
+          <span class="gpio-state ${i.enabled !== false && i.state ? 'on' : 'off'}"></span>
+          <span class="gpio-label" onclick="renamePinLabel('${camId}','${esc(i.name)}')" title="Klicka for att byta namn">${esc(i.label || i.name)}</span>
+          <span class="gpio-pin-id">pin ${i.pin}</span>
+          <span style="font-size:11px;color:${i.enabled !== false && i.state ? 'var(--green)' : 'var(--text3)'}">${i.enabled === false ? 'AV' : (i.state ? 'AKTIV' : 'Inaktiv')}</span>
+          <label class="gpio-enable-toggle" title="${i.enabled !== false ? 'Inaktivera' : 'Aktivera'}">
+            <input type="checkbox" ${i.enabled !== false ? 'checked' : ''} onchange="setPinEnabled('${camId}','${esc(i.name)}',this.checked)">
+            <span class="ge-slider"></span>
+          </label>
         </div>`;
       });
       html += '</div></div>';
