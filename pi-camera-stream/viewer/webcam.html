@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Webbkamera - Pi Camera Stream</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a1a;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .header {
+    width: 100%;
+    background: #1a1a2e;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #2a2a4a;
+  }
+  .header h1 { font-size: 16px; font-weight: 600; }
+  .header .status {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: #333;
+  }
+  .header .status.connected { background: #1b5e20; color: #a5d6a7; }
+  .header .status.streaming { background: #0d47a1; color: #90caf9; }
+  .header .status.error { background: #b71c1c; color: #ef9a9a; }
+
+  .setup-screen {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    max-width: 500px;
+    width: 100%;
+  }
+  .setup-screen h2 {
+    font-size: 22px;
+    margin-bottom: 8px;
+  }
+  .setup-screen p {
+    color: #999;
+    font-size: 14px;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+
+  .form-group {
+    width: 100%;
+    margin-bottom: 16px;
+  }
+  .form-group label {
+    display: block;
+    font-size: 13px;
+    color: #aaa;
+    margin-bottom: 4px;
+  }
+  .form-group input, .form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 15px;
+    outline: none;
+  }
+  .form-group input:focus, .form-group select:focus {
+    border-color: #4a9eff;
+  }
+  .form-group .hint {
+    font-size: 11px;
+    color: #666;
+    margin-top: 4px;
+  }
+
+  .btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 8px;
+  }
+  .btn-primary {
+    background: #4a9eff;
+    color: #fff;
+  }
+  .btn-primary:active { background: #3a8eef; }
+  .btn-danger {
+    background: #c62828;
+    color: #fff;
+  }
+  .btn-danger:active { background: #b71c1c; }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .camera-screen {
+    display: none;
+    flex: 1;
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .preview-container {
+    position: relative;
+    width: 100%;
+    max-width: 640px;
+    background: #000;
+  }
+  .preview-container video {
+    width: 100%;
+    display: block;
+    transform: scaleX(-1); /* Spegla for selfie */
+  }
+  .preview-overlay {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: flex;
+    gap: 8px;
+  }
+  .preview-badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(0,0,0,0.7);
+  }
+  .preview-badge.live { background: rgba(200,0,0,0.8); }
+
+  .stats-bar {
+    width: 100%;
+    max-width: 640px;
+    display: flex;
+    justify-content: space-around;
+    padding: 10px;
+    background: #1a1a2e;
+    border-top: 1px solid #2a2a4a;
+    font-size: 12px;
+    color: #999;
+  }
+  .stats-bar .stat-value { color: #e0e0e0; font-weight: 600; }
+
+  .controls {
+    width: 100%;
+    max-width: 640px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .camera-select-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .camera-select-row select {
+    flex: 1;
+    padding: 8px;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 14px;
+  }
+  .camera-select-row button {
+    padding: 8px 12px;
+    background: #333;
+    border: none;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 18px;
+    cursor: pointer;
+  }
+
+  .settings-row {
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+  }
+  .settings-row .form-group { margin-bottom: 0; }
+
+  .log-panel {
+    width: 100%;
+    max-width: 640px;
+    max-height: 150px;
+    overflow-y: auto;
+    background: #111;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 11px;
+    color: #888;
+    border-top: 1px solid #2a2a4a;
+    display: none;
+  }
+  .log-panel.visible { display: block; }
+  .log-entry { padding: 1px 0; }
+  .log-entry.error { color: #ef5350; }
+  .log-entry.success { color: #66bb6a; }
+
+  /* Canvas for frame capture (hidden) */
+  #captureCanvas { display: none; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>Webbkamera</h1>
+  <div class="status" id="statusBadge">Ej ansluten</div>
+</div>
+
+<!-- Setup Screen -->
+<div class="setup-screen" id="setupScreen">
+  <h2>Anslut webbkamera</h2>
+  <p>Streama din enhets kamera direkt till servern via webblasaren. Fungerar pa mobiler, surfplattor och datorer.</p>
+
+  <div class="form-group">
+    <label>Server-URL</label>
+    <input type="text" id="serverUrl" placeholder="wss://cam.example.com:2053">
+    <div class="hint">WebSocket-adressen till din server</div>
+  </div>
+
+  <div class="form-group">
+    <label>Kamerahemlighet (Secret)</label>
+    <input type="password" id="secretKey" placeholder="Din hemliga nyckel">
+  </div>
+
+  <div class="form-group">
+    <label>Kameranamn</label>
+    <input type="text" id="cameraName" placeholder="Min mobil">
+    <div class="hint">Visas i viewer-appen</div>
+  </div>
+
+  <div class="settings-row">
+    <div class="form-group" style="flex:1">
+      <label>Kvalitet</label>
+      <select id="quality">
+        <option value="0.4">Lag (snabbare)</option>
+        <option value="0.6" selected>Medium</option>
+        <option value="0.8">Hog</option>
+        <option value="0.92">Mycket hog</option>
+      </select>
+    </div>
+    <div class="form-group" style="flex:1">
+      <label>FPS</label>
+      <select id="fps">
+        <option value="2">2 fps</option>
+        <option value="5" selected>5 fps</option>
+        <option value="10">10 fps</option>
+        <option value="15">15 fps</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Kamera</label>
+    <select id="cameraSelect">
+      <option value="environment">Bakkamera</option>
+      <option value="user">Framkamera</option>
+    </select>
+    <div class="hint">Valj kamera (kan andras efter anslutning)</div>
+  </div>
+
+  <button class="btn btn-primary" id="startBtn" onclick="startStreaming()">Starta kamera</button>
+</div>
+
+<!-- Camera Screen -->
+<div class="camera-screen" id="cameraScreen">
+  <div class="preview-container">
+    <video id="videoPreview" autoplay playsinline muted></video>
+    <div class="preview-overlay">
+      <div class="preview-badge live" id="liveBadge" style="display:none">LIVE</div>
+      <div class="preview-badge" id="resBadge"></div>
+    </div>
+  </div>
+
+  <div class="stats-bar">
+    <div>FPS: <span class="stat-value" id="statFps">0</span></div>
+    <div>Skickat: <span class="stat-value" id="statSent">0</span></div>
+    <div>Storlek: <span class="stat-value" id="statSize">0 KB</span></div>
+    <div>Tid: <span class="stat-value" id="statTime">00:00</span></div>
+  </div>
+
+  <div class="controls">
+    <div class="camera-select-row">
+      <select id="cameraSwitcher" onchange="switchCamera()">
+        <option value="environment">Bakkamera</option>
+        <option value="user">Framkamera</option>
+      </select>
+      <button onclick="toggleLog()">&#128196;</button>
+    </div>
+
+    <div class="settings-row">
+      <div class="form-group" style="flex:1">
+        <label>Kvalitet</label>
+        <select id="qualityLive" onchange="updateQuality()">
+          <option value="0.4">Lag</option>
+          <option value="0.6" selected>Medium</option>
+          <option value="0.8">Hog</option>
+          <option value="0.92">Mycket hog</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1">
+        <label>FPS</label>
+        <select id="fpsLive" onchange="updateFps()">
+          <option value="2">2</option>
+          <option value="5" selected>5</option>
+          <option value="10">10</option>
+          <option value="15">15</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn btn-danger" onclick="stopStreaming()">Stoppa streaming</button>
+  </div>
+
+  <div class="log-panel" id="logPanel"></div>
+</div>
+
+<canvas id="captureCanvas"></canvas>
+
+<script>
+// ── State ──
+let ws = null;
+let mediaStream = null;
+let captureInterval = null;
+let frameCount = 0;
+let totalBytes = 0;
+let startTime = null;
+let currentFps = 5;
+let currentQuality = 0.6;
+let cameraId = null;
+let statsInterval = null;
+let registered = false;
+
+const video = document.getElementById('videoPreview');
+const canvas = document.getElementById('captureCanvas');
+const ctx = canvas.getContext('2d');
+
+// ── Persistence ──
+function saveSettings() {
+  const settings = {
+    serverUrl: document.getElementById('serverUrl').value,
+    secretKey: document.getElementById('secretKey').value,
+    cameraName: document.getElementById('cameraName').value,
+    quality: document.getElementById('quality').value,
+    fps: document.getElementById('fps').value,
+    camera: document.getElementById('cameraSelect').value,
+  };
+  try { localStorage.setItem('webcam_settings', JSON.stringify(settings)); } catch(e) {}
+}
+
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('webcam_settings'));
+    if (!s) return;
+    if (s.serverUrl) document.getElementById('serverUrl').value = s.serverUrl;
+    if (s.secretKey) document.getElementById('secretKey').value = s.secretKey;
+    if (s.cameraName) document.getElementById('cameraName').value = s.cameraName;
+    if (s.quality) document.getElementById('quality').value = s.quality;
+    if (s.fps) document.getElementById('fps').value = s.fps;
+    if (s.camera) document.getElementById('cameraSelect').value = s.camera;
+  } catch(e) {}
+}
+
+// ── Logging ──
+function log(msg, type) {
+  const panel = document.getElementById('logPanel');
+  const entry = document.createElement('div');
+  entry.className = 'log-entry' + (type ? ' ' + type : '');
+  const now = new Date().toLocaleTimeString('sv-SE');
+  entry.textContent = `[${now}] ${msg}`;
+  panel.appendChild(entry);
+  panel.scrollTop = panel.scrollHeight;
+  console.log(`[WebCam] ${msg}`);
+}
+
+function toggleLog() {
+  document.getElementById('logPanel').classList.toggle('visible');
+}
+
+// ── Status ──
+function setStatus(text, cls) {
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = text;
+  badge.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+// ── Camera ──
+async function getCamera(facingMode) {
+  const constraints = {
+    video: {
+      facingMode: facingMode || 'environment',
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+    },
+    audio: false,
+  };
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    return stream;
+  } catch (err) {
+    log('Kamerafel: ' + err.message, 'error');
+    // Fallback utan facingMode
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      return stream;
+    } catch (err2) {
+      throw err2;
+    }
+  }
+}
+
+async function switchCamera() {
+  const facing = document.getElementById('cameraSwitcher').value;
+  log('Byter kamera: ' + facing);
+
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+  }
+
+  try {
+    mediaStream = await getCamera(facing);
+    video.srcObject = mediaStream;
+    updateResolutionBadge();
+    log('Kamera bytt', 'success');
+
+    // Spegla bara framkamera
+    video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+  } catch (err) {
+    log('Kunde inte byta kamera: ' + err.message, 'error');
+  }
+}
+
+function updateResolutionBadge() {
+  const track = mediaStream?.getVideoTracks()[0];
+  if (track) {
+    const settings = track.getSettings();
+    document.getElementById('resBadge').textContent = `${settings.width}x${settings.height}`;
+    canvas.width = settings.width;
+    canvas.height = settings.height;
+  }
+}
+
+// ── WebSocket ──
+function connectWS(url, secret, name) {
+  return new Promise((resolve, reject) => {
+    log('Ansluter till ' + url + '...');
+    setStatus('Ansluter...', '');
+
+    try {
+      ws = new WebSocket(url);
+    } catch (err) {
+      log('WebSocket-fel: ' + err.message, 'error');
+      reject(err);
+      return;
+    }
+
+    ws.binaryType = 'arraybuffer';
+
+    const timeout = setTimeout(() => {
+      log('Anslutningen tog for lang tid', 'error');
+      ws.close();
+      reject(new Error('Timeout'));
+    }, 10000);
+
+    ws.onopen = () => {
+      clearTimeout(timeout);
+      log('WebSocket oppnad, registrerar kamera...', 'success');
+      setStatus('Registrerar...', 'connected');
+
+      // Generera unikt kamera-ID baserat pa namn + enhet
+      cameraId = 'webcam-' + name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+
+      const track = mediaStream?.getVideoTracks()[0];
+      const settings = track ? track.getSettings() : {};
+
+      ws.send(JSON.stringify({
+        type: 'register_camera',
+        secret: secret,
+        camera_id: cameraId,
+        name: name,
+        resolution: `${settings.width || 640}x${settings.height || 480}`,
+        capabilities: {
+          type: 'webcam',
+          platform: navigator.platform,
+          userAgent: navigator.userAgent.substring(0, 100),
+        },
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'registered') {
+          log('Kamera registrerad: ' + msg.camera_id, 'success');
+          setStatus('Streamar', 'streaming');
+          registered = true;
+          document.getElementById('liveBadge').style.display = '';
+          resolve();
+        } else if (msg.type === 'error') {
+          log('Serverfel: ' + msg.message, 'error');
+          setStatus('Fel', 'error');
+          reject(new Error(msg.message));
+        } else if (msg.type === 'subscribe') {
+          log('Viewer ansluten - skickar frames');
+        } else if (msg.type === 'unsubscribe') {
+          log('Viewer frakopplad');
+        }
+      } catch (e) {}
+    };
+
+    ws.onerror = (err) => {
+      clearTimeout(timeout);
+      log('WebSocket-fel', 'error');
+      setStatus('Fel', 'error');
+    };
+
+    ws.onclose = (event) => {
+      clearTimeout(timeout);
+      registered = false;
+      document.getElementById('liveBadge').style.display = 'none';
+      log(`WebSocket stangd (kod: ${event.code})`, event.code === 1000 ? '' : 'error');
+
+      if (captureInterval) {
+        setStatus('Ateransluter...', 'error');
+        log('Forsoker ateransluta om 3s...');
+        setTimeout(() => {
+          if (captureInterval) {
+            connectWS(url, secret, name).catch(err => {
+              log('Ateranslutning misslyckades: ' + err.message, 'error');
+            });
+          }
+        }, 3000);
+      } else {
+        setStatus('Frakopplad', '');
+      }
+    };
+  });
+}
+
+// ── Frame Capture & Send ──
+function captureAndSend() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !registered) return;
+  if (!mediaStream || !video.videoWidth) return;
+
+  // Rita video-frame till canvas
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  // Konvertera till JPEG blob
+  canvas.toBlob((blob) => {
+    if (!blob || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+    blob.arrayBuffer().then(buffer => {
+      try {
+        ws.send(buffer);
+        frameCount++;
+        totalBytes += buffer.byteLength;
+      } catch (err) {
+        log('Skickningsfel: ' + err.message, 'error');
+      }
+    });
+  }, 'image/jpeg', currentQuality);
+}
+
+// ── Stats ──
+function updateStats() {
+  if (!startTime) return;
+
+  const elapsed = (Date.now() - startTime) / 1000;
+  const mins = Math.floor(elapsed / 60);
+  const secs = Math.floor(elapsed % 60);
+
+  document.getElementById('statFps').textContent = captureInterval ? currentFps : '0';
+  document.getElementById('statSent').textContent = frameCount;
+  document.getElementById('statTime').textContent =
+    `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+  if (totalBytes < 1024 * 1024) {
+    document.getElementById('statSize').textContent = (totalBytes / 1024).toFixed(0) + ' KB';
+  } else {
+    document.getElementById('statSize').textContent = (totalBytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+}
+
+// ── Controls ──
+function updateQuality() {
+  currentQuality = parseFloat(document.getElementById('qualityLive').value);
+  log('Kvalitet andrad: ' + currentQuality);
+}
+
+function updateFps() {
+  currentFps = parseInt(document.getElementById('fpsLive').value);
+  log('FPS andrad: ' + currentFps);
+
+  if (captureInterval) {
+    clearInterval(captureInterval);
+    captureInterval = setInterval(captureAndSend, 1000 / currentFps);
+  }
+}
+
+// ── Start/Stop ──
+async function startStreaming() {
+  const serverUrl = document.getElementById('serverUrl').value.trim();
+  const secret = document.getElementById('secretKey').value.trim();
+  const name = document.getElementById('cameraName').value.trim() || 'Webbkamera';
+  const facing = document.getElementById('cameraSelect').value;
+  currentQuality = parseFloat(document.getElementById('quality').value);
+  currentFps = parseInt(document.getElementById('fps').value);
+
+  if (!serverUrl) {
+    alert('Ange server-URL');
+    return;
+  }
+  if (!secret) {
+    alert('Ange kamerahemlighet');
+    return;
+  }
+
+  saveSettings();
+
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true;
+  btn.textContent = 'Startar...';
+
+  try {
+    // 1. Starta kamera
+    log('Startar kamera (' + facing + ')...');
+    mediaStream = await getCamera(facing);
+    video.srcObject = mediaStream;
+    video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+
+    // Vanta pa att video laddas
+    await new Promise((resolve) => {
+      video.onloadedmetadata = resolve;
+      setTimeout(resolve, 3000); // Timeout fallback
+    });
+
+    updateResolutionBadge();
+    log('Kamera startad: ' + canvas.width + 'x' + canvas.height, 'success');
+
+    // 2. Anslut WebSocket
+    await connectWS(serverUrl, secret, name);
+
+    // 3. Starta frame capture
+    captureInterval = setInterval(captureAndSend, 1000 / currentFps);
+    startTime = Date.now();
+    frameCount = 0;
+    totalBytes = 0;
+
+    // 4. Starta stats-uppdatering
+    statsInterval = setInterval(updateStats, 1000);
+
+    // 5. Visa kameraskarm
+    document.getElementById('setupScreen').style.display = 'none';
+    document.getElementById('cameraScreen').style.display = 'flex';
+
+    // Synka live-kontroller
+    document.getElementById('qualityLive').value = currentQuality;
+    document.getElementById('fpsLive').value = currentFps;
+    document.getElementById('cameraSwitcher').value = facing;
+
+    log('Streaming startad!', 'success');
+
+  } catch (err) {
+    log('Startfel: ' + err.message, 'error');
+    setStatus('Fel', 'error');
+    alert('Kunde inte starta: ' + err.message);
+
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Starta kamera';
+}
+
+function stopStreaming() {
+  log('Stoppar streaming...');
+
+  if (captureInterval) {
+    clearInterval(captureInterval);
+    captureInterval = null;
+  }
+  if (statsInterval) {
+    clearInterval(statsInterval);
+    statsInterval = null;
+  }
+  if (ws) {
+    ws.close(1000, 'User stopped');
+    ws = null;
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+
+  registered = false;
+  document.getElementById('liveBadge').style.display = 'none';
+  document.getElementById('setupScreen').style.display = 'flex';
+  document.getElementById('cameraScreen').style.display = 'none';
+  setStatus('Stoppad', '');
+  log('Streaming stoppad');
+}
+
+// ── Visibility API: pausa nar tab ar dold ──
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && captureInterval) {
+    log('Tab dold - pausar frame capture');
+    clearInterval(captureInterval);
+    captureInterval = null;
+  } else if (!document.hidden && !captureInterval && registered) {
+    log('Tab synlig - aterupptar frame capture');
+    captureInterval = setInterval(captureAndSend, 1000 / currentFps);
+  }
+});
+
+// ── Init ──
+loadSettings();
+
+// Auto-fill server URL fran query params
+const params = new URLSearchParams(window.location.search);
+if (params.get('server')) document.getElementById('serverUrl').value = params.get('server');
+if (params.get('secret')) document.getElementById('secretKey').value = params.get('secret');
+if (params.get('name')) document.getElementById('cameraName').value = params.get('name');
+
+// Generera default kameranamn
+if (!document.getElementById('cameraName').value) {
+  const isMobile = /Android|iPhone|iPad/.test(navigator.userAgent);
+  document.getElementById('cameraName').value = isMobile ? 'Mobil' : 'Webbkamera';
+}
+</script>
+</body>
+</html>
