@@ -80,8 +80,69 @@ def print_section(title):
     print(f"\n{C.BOLD}{C.INFO}── {title} ──{C.END}")
 
 
+def repair_yaml_file(config_path):
+    """Auto-repair common YAML issues: BOM, tabs, encoding, trailing whitespace"""
+    repairs = []
+
+    # Read raw bytes to detect encoding issues
+    with open(config_path, 'rb') as f:
+        raw = f.read()
+
+    # Remove BOM (Byte Order Mark) - common with Windows editors
+    if raw.startswith(b'\xef\xbb\xbf'):
+        raw = raw[3:]
+        repairs.append('BOM borttagen')
+    elif raw.startswith(b'\xff\xfe') or raw.startswith(b'\xfe\xff'):
+        # UTF-16 BOM - convert to UTF-8
+        try:
+            text = raw.decode('utf-16')
+            raw = text.encode('utf-8')
+            repairs.append('UTF-16 konverterad till UTF-8')
+        except:
+            pass
+
+    # Decode to string
+    try:
+        content = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            content = raw.decode('latin-1')
+            repairs.append('Latin-1 konverterad till UTF-8')
+        except:
+            return repairs  # Can't fix encoding
+
+    # Replace tabs with spaces
+    if '\t' in content:
+        content = content.replace('\t', '  ')
+        repairs.append('Tabbar ersatta med mellanslag')
+
+    # Fix Windows line endings (CRLF -> LF)
+    if '\r\n' in content:
+        content = content.replace('\r\n', '\n')
+        repairs.append('Windows-radbrytningar fixade')
+
+    # Remove trailing whitespace on each line
+    lines = content.split('\n')
+    cleaned_lines = [line.rstrip() for line in lines]
+    if lines != cleaned_lines:
+        content = '\n'.join(cleaned_lines)
+        repairs.append('Efterf\u00f6ljande mellanslag borttagna')
+
+    # Remove null bytes (can happen with some editors)
+    if '\x00' in content:
+        content = content.replace('\x00', '')
+        repairs.append('Null-tecken borttagna')
+
+    # Write back if repairs were made
+    if repairs:
+        with open(config_path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(content)
+
+    return repairs
+
+
 def load_config(config_path):
-    """Load and validate cameras.yaml"""
+    """Load and validate cameras.yaml with auto-repair"""
     try:
         import yaml
     except ImportError:
@@ -92,14 +153,34 @@ def load_config(config_path):
         print_test(f"Konfigurationsfil finns", "fail", f"{config_path} hittades inte")
         return None
 
+    # First attempt
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
         print_test("Konfigurationsfil laddad", "ok", config_path)
         return config
-    except Exception as e:
-        print_test("Konfigurationsfil giltig", "fail", str(e))
-        return None
+    except Exception as first_error:
+        # Auto-repair and retry
+        print_test("Konfigurationsfil", "warn", f"Fel hittades, f\u00f6rs\u00f6ker reparera...")
+        try:
+            repairs = repair_yaml_file(config_path)
+            if repairs:
+                repair_str = ', '.join(repairs)
+                print_test("Auto-reparation", "ok", repair_str)
+
+                # Retry after repair
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                print_test("Konfigurationsfil laddad", "ok", f"efter reparation: {config_path}")
+                return config
+            else:
+                print_test("Konfigurationsfil giltig", "fail", str(first_error))
+                return None
+        except Exception as e:
+            print_test("Konfigurationsfil giltig", "fail", f"Kunde inte reparera: {e}")
+            print(f"        {C.DIM}Originalfel: {first_error}{C.END}")
+            print(f"        {C.DIM}Tips: \u00d6ppna cameras.yaml i Notepad och spara som UTF-8{C.END}")
+            return None
 
 
 def test_server_http(server_url):

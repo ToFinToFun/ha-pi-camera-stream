@@ -1,5 +1,5 @@
 name: "Pi Camera Stream"
-version: "5.2.7"
+version: "5.2.8"
 slug: "pi_camera_stream"
 description: "Stream video from Raspberry Pi cameras and Axis/RTSP network cameras. View multiple cameras in a grid, with motion detection, recording, PTZ control, and AI object detection."
 url: "https://github.com/ToFinToFun/ha-pi-camera-stream"

@@ -301,7 +301,13 @@ notifications:
 "@
 
 # Skriv config-fil
-$yamlContent | Out-File -FilePath $configFile -Encoding UTF8
+# Skriv utan BOM (PowerShell 5 lagger till BOM med -Encoding UTF8)
+try {
+    [System.IO.File]::WriteAllText($configFile, $yamlContent, (New-Object System.Text.UTF8Encoding $false))
+} catch {
+    # Fallback for aldre PowerShell
+    $yamlContent | Out-File -FilePath $configFile -Encoding ASCII
+}
 Write-Host ""
 Write-Host "  -> Konfiguration sparad i $configFile" -ForegroundColor Green
 

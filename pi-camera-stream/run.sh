@@ -6,7 +6,7 @@
 
 set -e
 
-echo "[run.sh] Starting Pi Camera Stream add-on v5.2.7..."
+echo "[run.sh] Starting Pi Camera Stream add-on v5.2.8..."
 
 # ─── Find SUPERVISOR_TOKEN ───
 # With init: false, S6 with-contenv doesn't run, so SUPERVISOR_TOKEN
