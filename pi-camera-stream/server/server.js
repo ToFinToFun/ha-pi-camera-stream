@@ -1,5 +1,5 @@
 /**
- * Pi Camera Relay Server v5.2.4 – Home Assistant Add-on Edition
+ * Pi Camera Relay Server v5.2.5 – Home Assistant Add-on Edition
  * 
  * Anpassad för att köras som HA add-on med:
  * - Ingress-stöd (X-Ingress-Path header)
@@ -46,7 +46,7 @@ const CONFIG = {
 };
 
 console.log('===========================================');
-console.log('  Pi Camera Relay Server v5.2.4');
+console.log('  Pi Camera Relay Server v5.2.5');
 console.log('  Home Assistant Add-on Edition');
 console.log('===========================================');
 if (IS_HA_ADDON) {
@@ -284,7 +284,7 @@ app.get('/api/dashboard', authMiddleware(), (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '5.2.4-ha',
+    version: '5.2.5-ha',
     cameras: cameras.size,
     totalViewers: allViewers.size,
     uptime: Math.floor((Date.now() - serverStartTime) / 1000),

@@ -312,51 +312,56 @@ if ($desktopPath -and (Test-Path $desktopPath)) {
     Write-Host "  -> Kunde inte hitta skrivbordet. Kopiera start_camera.bat manuellt." -ForegroundColor Yellow
 }
 
-# -- Fraga om Windows-tjanst --
+# -- Fraga om autostart --
 Write-Host ""
 Write-Host "  Vill du att kameran startar automatiskt nar datorn startar?" -ForegroundColor Yellow
-Write-Host "  (Installeras som en Windows-tjanst i bakgrunden)" -ForegroundColor DarkGray
+Write-Host "  (Anvander Windows Aktivitetsschemalagare - inga extra verktyg behovs)" -ForegroundColor DarkGray
 Write-Host ""
-$installService = Read-Host "  Installera som Windows-tjanst? [j/N]"
+$installAutostart = Read-Host "  Starta automatiskt vid inloggning? [J/n]"
 
-if ($installService -eq "j" -or $installService -eq "J") {
-    # Kontrollera om NSSM redan finns
-    $nssmPath = $null
-    try { $nssmPath = (Get-Command nssm -ErrorAction SilentlyContinue).Source } catch {}
+if ($installAutostart -ne "n" -and $installAutostart -ne "N") {
+    $taskName = "JPsecurity-$clientName"
 
-    if (-not $nssmPath) {
+    # Skapa ett VBS-skript som startar Python utan synligt fonster
+    $vbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.CurrentDirectory = "$installDir"
+WshShell.Run "$pythonCmd ""$installDir\camera_client.py"" --config ""$configFile""", 0, False
+"@
+    $vbsFile = Join-Path $installDir "start_hidden.vbs"
+    $vbsContent | Out-File -FilePath $vbsFile -Encoding ASCII
+
+    # Ta bort eventuell gammal uppgift
+    schtasks /Delete /TN $taskName /F 2>$null | Out-Null
+
+    # Skapa schemalagd uppgift som kors vid inloggning
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    schtasks /Create /TN $taskName /TR "wscript.exe `"$vbsFile`"" /SC ONLOGON /RL HIGHEST /F /RU $currentUser
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  -> Autostart installerad!" -ForegroundColor Green
+        Write-Host "  -> Kameran startar automatiskt nar du loggar in." -ForegroundColor Green
+        Write-Host "" 
+        Write-Host "  Hantera autostart:" -ForegroundColor DarkGray
+        Write-Host "    Stoppa:        schtasks /End /TN $taskName" -ForegroundColor DarkGray
+        Write-Host "    Starta:        schtasks /Run /TN $taskName" -ForegroundColor DarkGray
+        Write-Host "    Avinstallera:  schtasks /Delete /TN $taskName /F" -ForegroundColor DarkGray
+
+        # Starta direkt nu ocksa
         Write-Host ""
-        Write-Host "  NSSM (Non-Sucking Service Manager) behovs for att skapa en Windows-tjanst." -ForegroundColor Yellow
-        Write-Host "  Det ar ett litet gratisverktyg som gor att program kan koras som tjanster."
-        Write-Host ""
-        Write-Host "  Ladda ner NSSM:" -ForegroundColor Cyan
-        Write-Host "    https://nssm.cc/download" -ForegroundColor White
-        Write-Host ""
-        Write-Host "  Instruktioner:" -ForegroundColor Cyan
-        Write-Host "    1. Ladda ner och packa upp NSSM"
-        Write-Host "    2. Kopiera nssm.exe till C:\Windows\system32\"
-        Write-Host "    3. Kor sedan foljande i PowerShell (som administratör):"
-        Write-Host ""
-        Write-Host "    nssm install JPsecurity-$clientName `"$pythonCmd`" `"$installDir\camera_client.py --config $configFile`"" -ForegroundColor White
-        Write-Host "    nssm start JPsecurity-$clientName" -ForegroundColor White
-        Write-Host ""
-        Write-Host "  Tjansten startar sedan automatiskt vid varje omstart." -ForegroundColor Green
-        Write-Host "  For att stoppa: nssm stop JPsecurity-$clientName" -ForegroundColor DarkGray
-        Write-Host "  For att avinstallera: nssm remove JPsecurity-$clientName confirm" -ForegroundColor DarkGray
+        $startNow = Read-Host "  Starta kameran nu? [J/n]"
+        if ($startNow -ne "n" -and $startNow -ne "N") {
+            schtasks /Run /TN $taskName
+            Write-Host "  -> Kameran startar i bakgrunden!" -ForegroundColor Green
+        }
     } else {
-        Write-Host "  NSSM hittad! Installerar tjanst..." -ForegroundColor Green
-        $serviceName = "JPsecurity-$clientName"
-        & nssm install $serviceName $pythonCmd "$installDir\camera_client.py --config $configFile"
-        & nssm set $serviceName AppDirectory $installDir
-        & nssm set $serviceName DisplayName "JPsecurity - $clientName"
-        & nssm set $serviceName Description "JPsecurity kameraklient for $clientName"
-        & nssm start $serviceName
-        Write-Host "  -> Tjanst '$serviceName' installerad och startad!" -ForegroundColor Green
-        Write-Host "  -> Kameran startar nu automatiskt vid varje omstart." -ForegroundColor Green
+        Write-Host "  -> Kunde inte skapa schemalagd uppgift." -ForegroundColor Red
+        Write-Host "  -> Prova att kora PowerShell som administrator och kor skriptet igen." -ForegroundColor Yellow
+        Write-Host "  -> Du kan alltid starta manuellt via bat-filen pa skrivbordet." -ForegroundColor Yellow
     }
 } else {
-    Write-Host "  -> Hoppar over tjanst-installation." -ForegroundColor DarkGray
-    Write-Host "  -> Dubbelklicka pa 'JPsecurity - $clientName.bat' pa skrivbordet for att starta." -ForegroundColor White
+    Write-Host "  -> Hoppar over autostart." -ForegroundColor DarkGray
+    Write-Host "  -> Dubbelklicka pa 'JPsecurity - $clientName.bat' pa skrivbordet for att starta manuellt." -ForegroundColor White
 }
 
 Write-Host ""
@@ -367,12 +372,13 @@ Write-Host ""
 Write-Host "  Klient-namn:  $clientName" -ForegroundColor White
 Write-Host "  Server:       $serverUrl" -ForegroundColor White
 Write-Host "  Konfig:       $configFile" -ForegroundColor White
+Write-Host "  Autostart:    $(if ($installAutostart -ne 'n' -and $installAutostart -ne 'N') { 'Ja (vid inloggning)' } else { 'Nej' })" -ForegroundColor White
 Write-Host "  GPIO:         Ej tillgangligt (Windows)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "Kommandon:" -ForegroundColor Yellow
-Write-Host "  Starta:       Dubbelklicka 'JPsecurity - $clientName.bat' pa skrivbordet"
-Write-Host "  Manuellt:     $pythonCmd camera_client.py --config cameras.yaml"
-Write-Host "  Redigera:     notepad cameras.yaml"
+Write-Host "  Starta manuellt:  Dubbelklicka 'JPsecurity - $clientName.bat' pa skrivbordet"
+Write-Host "  Redigera config:  notepad cameras.yaml"
+Write-Host "  Visa logg:        $pythonCmd camera_client.py --config cameras.yaml"
 Write-Host ""
 Write-Host "Tips:" -ForegroundColor Yellow
 Write-Host "  * Natverkskameror (Axis/RTSP) fungerar identiskt som pa Pi"
