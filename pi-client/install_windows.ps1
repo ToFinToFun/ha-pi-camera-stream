@@ -17,6 +17,58 @@ Write-Host "  Camera Client - Windows Installation" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
+# -- Kontrollera PowerShell-version --
+$psVer = $PSVersionTable.PSVersion
+Write-Host "  PowerShell-version: $($psVer.Major).$($psVer.Minor).$($psVer.Build)" -ForegroundColor Gray
+
+if ($psVer.Major -lt 7) {
+    Write-Host ""
+    Write-Host "  OBS: Du kor PowerShell $($psVer.Major) (aldre version)." -ForegroundColor Yellow
+    Write-Host "  PowerShell 7+ rekommenderas for basta kompatibilitet." -ForegroundColor Yellow
+    Write-Host "  Installationen fungerar anda, men uppgradering rekommenderas." -ForegroundColor Yellow
+    Write-Host ""
+    $upgrade = Read-Host "  Vill du uppgradera PowerShell nu? [j/N]"
+    if ($upgrade -eq 'j' -or $upgrade -eq 'J' -or $upgrade -eq 'y' -or $upgrade -eq 'Y') {
+        Write-Host ""
+        Write-Host "  Laddar ner PowerShell 7..." -ForegroundColor Cyan
+        try {
+            # Hamta senaste versionen fran GitHub
+            $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/PowerShell/PowerShell/releases/latest"
+            $msiAsset = $latestRelease.assets | Where-Object { $_.name -match "PowerShell-.*-win-x64\.msi$" } | Select-Object -First 1
+
+            if ($msiAsset) {
+                $downloadPath = Join-Path $env:TEMP $msiAsset.name
+                Write-Host "  Laddar ner: $($msiAsset.name)" -ForegroundColor Gray
+                Invoke-WebRequest -Uri $msiAsset.browser_download_url -OutFile $downloadPath -UseBasicParsing
+
+                Write-Host "  Startar installationen..." -ForegroundColor Cyan
+                Write-Host "  Folj installationsguiden som oppnas." -ForegroundColor Yellow
+                Start-Process msiexec.exe -ArgumentList "/i `"$downloadPath`" /passive ADD_EXPLORER_CONTEXT_MENU_OPENPOWERSHELL=1 ADD_FILE_CONTEXT_MENU_RUNPOWERSHELL=1 ENABLE_PSREMOTING=0 REGISTER_MANIFEST=1" -Wait
+
+                Write-Host ""
+                Write-Host "  PowerShell 7 installerad!" -ForegroundColor Green
+                Write-Host "  Starta om detta skript i 'PowerShell 7' (sok i startmenyn)." -ForegroundColor Yellow
+                Write-Host "  Du hittar den som 'pwsh' eller 'PowerShell 7' i startmenyn." -ForegroundColor Yellow
+                Write-Host ""
+                Read-Host "  Tryck Enter for att avsluta"
+                exit 0
+            } else {
+                Write-Host "  Kunde inte hitta ratt installationsfil." -ForegroundColor Red
+                Write-Host "  Ladda ner manuellt fran: https://github.com/PowerShell/PowerShell/releases/latest" -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "  Nedladdning misslyckades: $_" -ForegroundColor Red
+            Write-Host "  Ladda ner manuellt fran: https://github.com/PowerShell/PowerShell/releases/latest" -ForegroundColor Yellow
+        }
+        Write-Host ""
+        $cont = Read-Host "  Vill du fortsatta installationen med PowerShell $($psVer.Major) anda? [J/n]"
+        if ($cont -eq 'n' -or $cont -eq 'N') {
+            exit 0
+        }
+    }
+    Write-Host ""
+}
+
 # -- Kontrollera Python --
 $pythonCmd = $null
 foreach ($cmd in @("python", "python3", "py")) {
