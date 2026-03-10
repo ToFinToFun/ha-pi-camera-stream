@@ -344,16 +344,7 @@ a{color:var(--blue);text-decoration:none}
     <div class="sidebar" id="sidebar">
       <h3>Kameror (<span id="cam-count">0</span>)</h3>
       <div class="cam-list" id="cam-list"></div>
-      <div id="secret-info" style="display:none;padding:8px 16px">
-        <div class="secret-box">
-          <strong>Serveradress:</strong><br>
-          <code id="server-url-display">...</code>
-          <br style="margin-top:8px">
-          <strong>Kamerahemlighet:</strong><br>
-          <code id="camera-secret-display">...</code>
-          <p style="margin-top:8px;font-size:11px;color:var(--text3)">Anvand dessa uppgifter vid installation av nya kameraklienter (Pi, Windows, webbkamera)</p>
-        </div>
-      </div>
+
     </div>
     <div class="content">
       <!-- LIVE -->
@@ -427,6 +418,18 @@ a{color:var(--blue);text-decoration:none}
 
           <h2 style="margin-top:32px;margin-bottom:12px">Notis-installningar per kamera</h2>
           <div id="notif-settings-container"><p style="color:var(--text3)">Laddar...</p></div>
+
+          <h2 style="margin-top:32px;margin-bottom:12px">Serveruppgifter</h2>
+          <div id="secret-info" style="display:none">
+            <div class="secret-box" style="background:var(--bg3);border-radius:10px;padding:16px;max-width:500px">
+              <strong>Serveradress:</strong><br>
+              <code id="server-url-display" style="font-size:14px;color:var(--blue);user-select:all">...</code>
+              <br style="margin-top:12px">
+              <strong>Kamerahemlighet:</strong><br>
+              <code id="camera-secret-display" style="font-size:14px;color:var(--blue);user-select:all">...</code>
+              <p style="margin-top:12px;font-size:12px;color:var(--text3)">Anvand dessa uppgifter vid installation av nya kameraklienter (Pi, Windows, webbkamera)</p>
+            </div>
+          </div>
 
           <h2 style="margin-top:32px">Audit-logg</h2>
           <div id="audit-log" style="margin-top:12px"></div>
