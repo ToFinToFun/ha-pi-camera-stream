@@ -454,6 +454,19 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable pi-camera.service
 
+# ── Steg 7: Anslutningstest ────────────────────────────────────────
+echo ""
+echo "[7/7] Anslutningstest..."
+echo ""
+read -p "  Köra anslutningstest nu? [J/n]: " run_test
+run_test=${run_test:-J}
+if [[ "$run_test" != "n" && "$run_test" != "N" ]]; then
+    python3 "${INSTALL_DIR}/connection_test.py" --config "${CONFIG_FILE}"
+else
+    echo "  → Hoppar över test. Du kan köra det senare med:"
+    echo "    python3 connection_test.py"
+fi
+
 echo ""
 echo "============================================"
 echo "  Installation klar!"

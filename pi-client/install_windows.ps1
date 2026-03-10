@@ -391,6 +391,18 @@ WshShell.Run "$pythonCmd ""$installDir\camera_client.py"" --config ""$configFile
     Write-Host "  -> Dubbelklicka pa 'JPsecurity - $clientName.bat' pa skrivbordet for att starta manuellt." -ForegroundColor White
 }
 
+# -- Steg 6: Anslutningstest --
+Write-Host ""
+Write-Host "[6/6] Anslutningstest..." -ForegroundColor Yellow
+Write-Host ""
+$runTest = Read-Host "  Kora anslutningstest nu? [J/n]"
+if ($runTest -ne "n" -and $runTest -ne "N") {
+    & $pythonCmd (Join-Path $installDir "connection_test.py") --config $configFile
+} else {
+    Write-Host "  -> Hoppar over test. Du kan kora det senare med:" -ForegroundColor DarkGray
+    Write-Host "     python connection_test.py" -ForegroundColor DarkGray
+}
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Installation klar!" -ForegroundColor Cyan
