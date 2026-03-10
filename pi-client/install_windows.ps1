@@ -128,6 +128,33 @@ client_name: "$clientName"
 cameras:
 "@
 
+# Detektera lokal IP och natmask
+$localNet = ""
+try {
+    $adapter = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.PrefixOrigin -ne 'WellKnown' } | Select-Object -First 1
+    if ($adapter) {
+        $localIP = $adapter.IPAddress
+        $prefix = $adapter.PrefixLength
+        # Berakna natmask fran prefix
+        $maskBits = ([Math]::Pow(2, $prefix) - 1) * [Math]::Pow(2, 32 - $prefix)
+        $maskBytes = [BitConverter]::GetBytes([UInt32]$maskBits)
+        [Array]::Reverse($maskBytes)
+        $subnetMask = ($maskBytes | ForEach-Object { $_.ToString() }) -join '.'
+        # Berakna natverksadress
+        $ipParts = $localIP.Split('.')
+        $maskParts = $subnetMask.Split('.')
+        $netParts = for ($i = 0; $i -lt 4; $i++) { [int]$ipParts[$i] -band [int]$maskParts[$i] }
+        $networkAddr = $netParts -join '.'
+        $localNet = "(narbar fran $localIP / $subnetMask)"
+        Write-Host ""
+        Write-Host "  Natverksinfo:" -ForegroundColor Cyan
+        Write-Host "    Denna dator:  $localIP" -ForegroundColor White
+        Write-Host "    Natmask:      $subnetMask" -ForegroundColor White
+        Write-Host "    Natverk:      $networkAddr/$prefix" -ForegroundColor White
+        Write-Host "    Kameror bor vara i samma natverk ($networkAddr.x)" -ForegroundColor DarkGray
+    }
+} catch {}
+
 # Lagg till kameror interaktivt
 Write-Host ""
 Write-Host "  Nu lagger vi till kameror. Skriv 'klar' nar du ar fardig."
@@ -159,7 +186,7 @@ while ($true) {
 
     switch ($camType) {
         "axis" {
-            $camHost = Read-Host "    IP-adress"
+            $camHost = Read-Host "    IP-adress $localNet"
             $camUser = Read-Host "    Anvandarnamn [root]"
             if ([string]::IsNullOrWhiteSpace($camUser)) { $camUser = "root" }
             $camPass = Read-Host "    Losenord"
@@ -187,7 +214,7 @@ while ($true) {
 "@
         }
         "rtsp" {
-            $camRtsp = Read-Host "    RTSP URL"
+            $camRtsp = Read-Host "    RTSP URL $localNet"
             $camFps = Read-Host "    FPS [10]"
             if ([string]::IsNullOrWhiteSpace($camFps)) { $camFps = "10" }
 

@@ -206,6 +206,28 @@ client_name: "${PI_NAME}"
 cameras:
 EOF
 
+# Detektera lokal IP och nätmask
+LOCAL_NET=""
+LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+if [[ -n "$LOCAL_IP" ]]; then
+    # Hämta nätmask och prefix
+    IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+    if [[ -n "$IFACE" ]]; then
+        PREFIX=$(ip -4 addr show "$IFACE" | grep -oP 'inet \K[0-9./]+' | head -1 | cut -d/ -f2)
+        SUBNET_MASK=$(python3 -c "import ipaddress; print(ipaddress.IPv4Network('0.0.0.0/$PREFIX').netmask)" 2>/dev/null || echo "255.255.255.0")
+        NETWORK=$(python3 -c "import ipaddress; print(ipaddress.IPv4Network('${LOCAL_IP}/${PREFIX}', strict=False).network_address)" 2>/dev/null || echo "")
+        LOCAL_NET="(nårbar från ${LOCAL_IP} / ${SUBNET_MASK})"
+        echo ""
+        echo -e "  \033[36mNätverksinfo:\033[0m"
+        echo "    Denna enhet:  ${LOCAL_IP}"
+        echo "    Nätmask:      ${SUBNET_MASK}"
+        if [[ -n "$NETWORK" ]]; then
+            echo "    Nätverk:      ${NETWORK}/${PREFIX}"
+            echo -e "    \033[90mKameror bör vara i samma nätverk (${NETWORK}.x)\033[0m"
+        fi
+    fi
+fi
+
 # Lägg till kameror interaktivt (om inte bara GPIO)
 if [[ "$camera_choice" != "6" ]]; then
     echo ""
@@ -232,7 +254,7 @@ if [[ "$camera_choice" != "6" ]]; then
 
         case $cam_type in
             axis)
-                read -p "    IP-adress: " cam_host
+                read -p "    IP-adress ${LOCAL_NET}: " cam_host
                 read -p "    Användarnamn [root]: " cam_user
                 cam_user=${cam_user:-root}
                 read -p "    Lösenord: " cam_pass
@@ -259,7 +281,7 @@ if [[ "$camera_choice" != "6" ]]; then
 EOF
                 ;;
             rtsp)
-                read -p "    RTSP URL: " cam_rtsp
+                read -p "    RTSP URL ${LOCAL_NET}: " cam_rtsp
                 read -p "    FPS [10]: " cam_fps
                 cam_fps=${cam_fps:-10}
 
