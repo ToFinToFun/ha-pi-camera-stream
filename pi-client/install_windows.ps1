@@ -232,6 +232,26 @@ WshShell.Run "$pythonCmd ""$installDir\camera_client.py"" --config ""$configFile
     $vbsContent | Out-File -FilePath $vbsFile -Encoding ASCII
     Write-Host "  -> Autostart-skript uppdaterat" -ForegroundColor Green
 
+    # Migrera fran schtasks till Startup-mappen om det behovs
+    $startupFolder = [Environment]::GetFolderPath('Startup')
+    if ($startupFolder -and (Test-Path $startupFolder)) {
+        $shortcutPath = Join-Path $startupFolder "JPsecurity - $clientName.lnk"
+        if (-not (Test-Path $shortcutPath)) {
+            # Skapa genvag i Startup-mappen
+            $WScriptShell = New-Object -ComObject WScript.Shell
+            $shortcut = $WScriptShell.CreateShortcut($shortcutPath)
+            $shortcut.TargetPath = "wscript.exe"
+            $shortcut.Arguments = "`"$vbsFile`""
+            $shortcut.WorkingDirectory = "$installDir"
+            $shortcut.Description = "JPsecurity Camera Client - $clientName"
+            $shortcut.Save()
+            Write-Host "  -> Autostart-genvag skapad i Startup-mappen" -ForegroundColor Green
+        }
+        # Ta bort gammal schtasks om den finns
+        $taskName = "JPsecurity-$clientName"
+        schtasks /Delete /TN $taskName /F 2>$null | Out-Null
+    }
+
     # Anslutningstest
     Write-Host ""
     Write-Host "[3/3] Anslutningstest..." -ForegroundColor Yellow
@@ -250,7 +270,7 @@ WshShell.Run "$pythonCmd ""$installDir\camera_client.py"" --config ""$configFile
     Write-Host "  Server:       $serverUrl" -ForegroundColor White
     Write-Host "  Konfig:       $configFile (oforandrad)" -ForegroundColor White
     Write-Host ""
-    Write-Host "  Starta om kameran for att anvanda uppdaterad kod:" -ForegroundColor Yellow
+    Write-Host "  Starta om kamera-klienten for att anvanda uppdaterad kod:" -ForegroundColor Yellow
     Write-Host "    Dubbelklicka 'JPsecurity - $clientName.bat' pa skrivbordet" -ForegroundColor White
     Write-Host ""
 
@@ -324,8 +344,9 @@ if ($isUpdate -and $exCameras.Count -gt 0) {
     Write-Host "    1) Behall befintliga kameror (Enter)" -ForegroundColor White
     Write-Host "    2) Redigera befintliga kameror (andra varden)" -ForegroundColor White
     Write-Host "    3) Borja om med nya kameror" -ForegroundColor White
+    Write-Host "    4) Behall befintliga + lagg till fler kameror" -ForegroundColor White
     Write-Host ""
-    $camAction = Read-Host "  Valj [1/2/3] (standard: 1)"
+    $camAction = Read-Host "  Valj [1/2/3/4] (standard: 1)"
     if ([string]::IsNullOrWhiteSpace($camAction)) { $camAction = "1" }
 } else {
     Write-Host "  Vilka kameror ska denna klient hantera?"
@@ -438,6 +459,30 @@ if ($camAction -eq "1" -and $isUpdate -and $exCameras.Count -gt 0) {
     }
     Write-Host ""
     Write-Host "  -> $($exCameras.Count) befintliga kameror behallna" -ForegroundColor Green
+
+} elseif ($camAction -eq "4" -and $isUpdate -and $exCameras.Count -gt 0) {
+    # Behall befintliga kameror OCH lagg till nya
+    foreach ($cam in $exCameras) {
+        $yamlContent += "`n  - type: `"$($cam.type)`""
+        $yamlContent += "`n    camera_id: `"$($cam.camera_id)`""
+        $yamlContent += "`n    name: `"$($cam.name)`""
+
+        if ($cam.host) { $yamlContent += "`n    host: `"$($cam.host)`"" }
+        if ($cam.username) { $yamlContent += "`n    username: `"$($cam.username)`"" }
+        if ($cam.password) { $yamlContent += "`n    password: `"$($cam.password)`"" }
+        if ($cam.port) { $yamlContent += "`n    port: $($cam.port)" }
+        if ($cam.mode) { $yamlContent += "`n    mode: `"$($cam.mode)`"" }
+        if ($cam.rtsp_url) { $yamlContent += "`n    rtsp_url: `"$($cam.rtsp_url)`"" }
+        if ($cam.device -ne $null) { $yamlContent += "`n    device: $($cam.device)" }
+        if ($cam.width) { $yamlContent += "`n    width: $($cam.width)" }
+        if ($cam.height) { $yamlContent += "`n    height: $($cam.height)" }
+        if ($cam.fps) { $yamlContent += "`n    fps: $($cam.fps)" }
+        if ($cam.quality) { $yamlContent += "`n    quality: $($cam.quality)" }
+    }
+    Write-Host ""
+    Write-Host "  -> $($exCameras.Count) befintliga kameror behallna" -ForegroundColor Green
+    Write-Host "  Nu lagger vi till fler kameror..." -ForegroundColor Yellow
+    $addNewCameras = $true
 
 } elseif ($camAction -eq "2" -and $isUpdate -and $exCameras.Count -gt 0) {
     # Redigera befintliga kameror - visa nuvarande varden som defaults
@@ -797,13 +842,12 @@ if ($desktopPath -and (Test-Path $desktopPath)) {
 # -- Fraga om autostart --
 Write-Host ""
 Write-Host "  Vill du att kameran startar automatiskt nar datorn startar?" -ForegroundColor Yellow
-Write-Host "  (Anvander Windows Aktivitetsschemalagare - inga extra verktyg behovs)" -ForegroundColor DarkGray
+Write-Host "  (Lagger en genvag i Windows Startup-mappen - kraver INTE administrator)" -ForegroundColor DarkGray
 Write-Host ""
 $installAutostart = Read-Host "  Starta automatiskt vid inloggning? [J/n]"
 
 if ($installAutostart -ne "n" -and $installAutostart -ne "N") {
-    $taskName = "JPsecurity-$clientName"
-
+    # Skapa VBS-skript som startar Python utan synligt fonster
     $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.CurrentDirectory = "$installDir"
@@ -812,31 +856,43 @@ WshShell.Run "$pythonCmd ""$installDir\camera_client.py"" --config ""$configFile
     $vbsFile = Join-Path $installDir "start_hidden.vbs"
     $vbsContent | Out-File -FilePath $vbsFile -Encoding ASCII
 
-    # Ta bort eventuell gammal uppgift
-    schtasks /Delete /TN $taskName /F 2>$null | Out-Null
+    # Lagg i Windows Startup-mappen (kraver INTE admin)
+    $startupFolder = [Environment]::GetFolderPath('Startup')
+    if ($startupFolder -and (Test-Path $startupFolder)) {
+        # Ta bort eventuell gammal genvag
+        $oldLinks = Get-ChildItem $startupFolder -Filter "JPsecurity*" -ErrorAction SilentlyContinue
+        foreach ($old in $oldLinks) { Remove-Item $old.FullName -Force }
 
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    schtasks /Create /TN $taskName /TR "wscript.exe `"$vbsFile`"" /SC ONLOGON /RL HIGHEST /F /RU $currentUser
+        # Skapa genvag (.lnk) i Startup-mappen
+        $shortcutPath = Join-Path $startupFolder "JPsecurity - $clientName.lnk"
+        $WScriptShell = New-Object -ComObject WScript.Shell
+        $shortcut = $WScriptShell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = "wscript.exe"
+        $shortcut.Arguments = "`"$vbsFile`""
+        $shortcut.WorkingDirectory = "$installDir"
+        $shortcut.Description = "JPsecurity Camera Client - $clientName"
+        $shortcut.Save()
 
-    if ($LASTEXITCODE -eq 0) {
         Write-Host "  -> Autostart installerad!" -ForegroundColor Green
         Write-Host "  -> Kameran startar automatiskt nar du loggar in." -ForegroundColor Green
-        Write-Host "" 
-        Write-Host "  Hantera autostart:" -ForegroundColor DarkGray
-        Write-Host "    Stoppa:        schtasks /End /TN $taskName" -ForegroundColor DarkGray
-        Write-Host "    Starta:        schtasks /Run /TN $taskName" -ForegroundColor DarkGray
-        Write-Host "    Avinstallera:  schtasks /Delete /TN $taskName /F" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Startup-mapp: $startupFolder" -ForegroundColor DarkGray
+        Write-Host "  Ta bort genvagen dar for att avaktivera autostart." -ForegroundColor DarkGray
+
+        # Ta bort eventuell gammal schtasks-uppgift (fran tidigare version)
+        $taskName = "JPsecurity-$clientName"
+        schtasks /Delete /TN $taskName /F 2>$null | Out-Null
 
         Write-Host ""
-        $startNow = Read-Host "  Starta kameran nu? [J/n]"
+        $startNow = Read-Host "  Starta kamera-klienten nu? [J/n]"
         if ($startNow -ne "n" -and $startNow -ne "N") {
-            schtasks /Run /TN $taskName
-            Write-Host "  -> Kameran startar i bakgrunden!" -ForegroundColor Green
+            Start-Process "wscript.exe" -ArgumentList "`"$vbsFile`"" -WorkingDirectory "$installDir"
+            Write-Host "  -> Kamera-klienten startar i bakgrunden!" -ForegroundColor Green
         }
     } else {
-        Write-Host "  -> Kunde inte skapa schemalagd uppgift." -ForegroundColor Red
-        Write-Host "  -> Prova att kora PowerShell som administrator och kor skriptet igen." -ForegroundColor Yellow
-        Write-Host "  -> Du kan alltid starta manuellt via bat-filen pa skrivbordet." -ForegroundColor Yellow
+        Write-Host "  -> Kunde inte hitta Startup-mappen." -ForegroundColor Red
+        Write-Host "  -> Du kan kopiera start_hidden.vbs manuellt till:" -ForegroundColor Yellow
+        Write-Host "     $env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup" -ForegroundColor Yellow
     }
 } else {
     Write-Host "  -> Hoppar over autostart." -ForegroundColor DarkGray
